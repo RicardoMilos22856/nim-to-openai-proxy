@@ -1,5 +1,5 @@
 ### Announcement 
-Due to personal health the old owner will no longer be able to maintain this project. However, for the time being, I’m gonna try to maintain this. The original repository I forked from is https://github.com/Jontte6/nim-to-openai-proxy 
+Due to personal health reasons, the old owner will no longer be able to maintain this project. However, for the time being, I’m gonna try to maintain this!! The original repository I forked from is https://github.com/Jontte6/nim-to-openai-proxy 
 
 
 ### If you forked before June 7, 2026, please pull the latest version — previous versions had an auth bypass and startup DDoS vulnerability.
@@ -8,7 +8,7 @@ Due to personal health the old owner will no longer be able to maintain this pro
 
 
 ### NVIDIA NIM to OpenAI Proxy
-Hello, this is my first ever project on Github that I am making public. This is essentially just a translation layer between the API format that NVIDIA NIM uses to the format OpenAI uses. Jontte made this originally by building on a script from a Reddit guide. Over the time of a month he has iterated on it, fixed problems, added auth, more models, and removed/replaced deprecated models.
+Hello, this is my first ever project on Github that I am making public. This is essentially just a translation layer between the API format that NVIDIA NIM uses to the format OpenAI uses. Jontte made this originally by building on a script from a Reddit guide. Over the time of a month he had iterated on it, fixed problems, added auth, more models, and removed/replaced deprecated models.
 These are the current available models for usage, and the use cases for all of them. (Note: The Google models are mostly for troubleshooting issues with latency and timeouts.)
 
 ### Why use this proxy?
@@ -62,7 +62,7 @@ Node.js 24+, a NVAPI/Nim API key, a deployment platform (though if you follow th
 | Fast responses needed | `mistral` (675B) | `gemini-pro`, `mistral-turbo`, `gpt-3.5o` |
 | Long context / memory | Anything under 30B | `gpt-4-turbo`, `mistral`, `gpt-4`, `glm-5.2` |
 | Testing / very fast replies | — | `google-lightest`, `gpt-3.5o` |
-| Coding / Long horizon work | - | `glm-5.2` |
+| Coding / Long horizon work | — | `glm-5.2` |
 
 ### Fallback Chain
 
@@ -134,7 +134,7 @@ This is a project I am maintaining for my own use, but I'm happy if it helps oth
 
 ## Issues
 
-Before opening an issue, check if it's already covered in the [Troubleshooting](#troubleshooting) section. If a model stopped working, it's probably deprecated by NVIDIA — check the [NIM catalog](https://build.nvidia.com/) first and please contact me on discord to inform me.
+Before opening an issue, check if it's already covered in the [Troubleshooting](#troubleshooting) section. If a model stopped working, it's probably deprecated by NVIDIA — check the [NIM catalog](https://build.nvidia.com/) first and please contact me on Discord (my username is provided below) to inform me.
 
 When reporting bugs, include:
 - Which model alias you were using
