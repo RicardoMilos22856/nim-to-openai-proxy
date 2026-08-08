@@ -8,12 +8,12 @@ Due to personal health the old owner will no longer be able to maintain this pro
 
 
 ### NVIDIA NIM to OpenAI Proxy
-Hello, this is my first ever project on Github that I am making public. This is essentially just a translation layer between the API format that NVIDIA NIM uses to the format OpenAI uses. I made this originally by building on a script from a Reddit guide. Over the time of a month I've iterated on it, fixed problems, added auth, more models, and removed/replaced deprecated models.
+Hello, this is my first ever project on Github that I am making public. This is essentially just a translation layer between the API format that NVIDIA NIM uses to the format OpenAI uses. Jontte made this originally by building on a script from a Reddit guide. Over the time of a month he has iterated on it, fixed problems, added auth, more models, and removed/replaced deprecated models.
 These are the current available models for usage, and the use cases for all of them. (Note: The Google models are mostly for troubleshooting issues with latency and timeouts.)
 
 ### Why use this proxy?
 
-JanitorAI requires an OpenAI-compatible proxy to use NVIDIA NIM. SillyTavern can connect to NIM directly, but if you use **Lorebary** for prompts, lorebooks, or plugins, this proxy is necessary — Lorebary does not support NIM natively. Various other frontends for coding and other things also may bug with NIM.
+A lot of frontends such as JanitorAI requires an OpenAI-compatible proxy to use NVIDIA NIM. SillyTavern can connect to NIM directly, but if you use **Lorebary** for prompts, lorebooks, or plugins, this proxy is necessary — Lorebary does not support NIM natively. Various other frontends for coding and other things also may bug with NIM.
 
 ### Legality
 
@@ -56,12 +56,13 @@ Node.js 24+, a NVAPI/Nim API key, a deployment platform (though if you follow th
 
 ### Filter Guide
 
-| If your RP involves... | Avoid | Use instead |
+| If your use case involves... | Avoid | Use instead |
 |---|---|---|
 | Dark themes, violence, mature content | `gpt-4o`, `gpt-4-flash`, `gpt-4-turbo` (They have high filters due to being based in China) | `mistral`, `gemini-pro`, `claude-3-opus` |
 | Fast responses needed | `mistral` (675B) | `gemini-pro`, `mistral-turbo`, `gpt-3.5o` |
-| Long context / memory | Anything under 30B | `gpt-4-turbo`, `mistral`, `gpt-4` |
+| Long context / memory | Anything under 30B | `gpt-4-turbo`, `mistral`, `gpt-4`, `glm-5.2` |
 | Testing / very fast replies | — | `google-lightest`, `gpt-3.5o` |
+| Coding / Long horizon work | - | `glm-5.2` |
 
 ### Fallback Chain
 
@@ -75,7 +76,7 @@ If your requested model fails, the proxy automatically tries:
 All fallbacks are non-Chinese-hosted to avoid filter interruption mid-scene. These can be changed, but i found that these four work best as fallbacks.
 
 ### Auth Guide
-I added auth middleware that wasn't present in the code I built upon. It uses an env var in your deployment. Use any secure string of 32+ characters, or generate one by hashing your NVAPI key. I recommend using an online hash tool or command to make a hash of your NVAPI key since the key is already complex as is, and a hash makes it more secure as it cannot be realistically reversed back to the NVAPI key. The first 32 characters of the hash are enough.
+Jontte added auth middleware that wasn't present in the code he built upon. It uses an env var in your deployment. Use any secure string of 32+ characters, or generate one by hashing your NVAPI key. I recommend using an online hash tool or command to make a hash of your NVAPI key since the key is already complex as is, and a hash makes it more secure as it cannot be realistically reversed back to the NVAPI key. The first 32 characters of the hash are enough.
 You can easily generate the hash with an online SHA-256 generator or any hash tool. Then make an env variable called "CLIENT_AUTH_KEY" and enter the first 32 characters of your hash into the variable (or any custom length over 16, or a custom key). Enter the hash into the API Key field in JanitorAI/SillyTavern.
 
 ### Proxy Setup Guide
@@ -93,7 +94,7 @@ The client never sees your NVAPI key, which is why we don't use it as the auth, 
 
 ### Optional Environment Variables
 
-After deploying, you can set these in Railway's **Variables** tab:
+After deploying, you can set these in Railway's **Variables** tab (reasoning does not work reliably):
 
 | Variable | Value | Effect |
 |---|---|---|
@@ -118,7 +119,7 @@ Set to `false` or remove to disable. Changes apply without redeploying.
 
 ## Contributing
 
-This is a personal hobby project I built for my own use, but I'm happy if it helps others. If you spot a bug, want to suggest a model mapping, or have a small improvement, feel free to open an issue or PR. I can't promise fast responses since I maintain this in my free time, but I'll do my best.
+This is a project I am maintaining for my own use, but I'm happy if it helps others. If you spot a bug, want to suggest a model mapping, or have a small improvement, feel free to open an issue or PR. I will try to be as fast as possible as responses, but again, don’t count on it since I maintain this in my free time. I have many other projects i’m working on at the same time, but I'll do my best.
 
 ### What I'm open to
 - Model mapping updates (NIM deprecates things constantly)
@@ -127,7 +128,7 @@ This is a personal hobby project I built for my own use, but I'm happy if it hel
 - Documentation improvements
 
 ### What I'm less likely to merge
-- Major architectural changes (I want to keep this simple)
+- Major architectural changes (I want to keep this simple as to honour Jontte’s wishes)
 - Features I don't personally use (harder for me to maintain)
 - Anything that adds complexity without clear benefit
 
@@ -142,8 +143,8 @@ When reporting bugs, include:
 - Your deployment platform (Railway, Render, etc.)
 
 ## Contact
-Need to reach out faster? Add me on discord (Username - Skywalker_1401)
+Need to reach out faster? Add me on Discord (Username - `Skywalker_1401`)
 
 ## Disclaimer
 
-I am not a professional developer. This project was built with help from AI tools and community guides. It works for me, but your mileage may vary. Use at your own risk. I am still learning JS, so the speed at which I am able to fix issues, and respond to them will vary depending on the type of issue, and how common it is.
+I am not a professional developer, this whole project was made by Jontte, so all credits to him! I’m going to maintain this for the time being. Jontte made this project via the help of AI tools and community guides as well.
