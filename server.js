@@ -607,8 +607,20 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
 
             delta.content = clientContent;
-            delete delta.reasoning;
-            delete delta.reasoning_content;
+
+            // FIX: keep a structured reasoning field alongside the inline
+            // <thinking> tags in content. GoonChat parses the inline tags;
+            // clients like Pal Chat / OpenRouter-style apps look for a
+            // separate `reasoning`/`reasoning_content` field to render their
+            // own collapsible thinking UI. Without this, those clients just
+            // see one flat content blob and never show a thinking indicator.
+            if (SHOW_REASONING && normalizedDelta.reasoning) {
+              delta.reasoning = normalizedDelta.reasoning;
+              delta.reasoning_content = normalizedDelta.reasoning;
+            } else {
+              delete delta.reasoning;
+              delete delta.reasoning_content;
+            }
           }
 
           safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
@@ -740,12 +752,24 @@ app.post('/v1/chat/completions', async (req, res) => {
             content = `<thinking>\n${reasoning}\n</thinking>\n\n${content}`;
           }
 
+          const finalMessage = { ...normalizedChoice.message, content };
+
+          // Same fix as the streaming path: keep the structured field
+          // alongside the inline tags so structured-reasoning clients
+          // (Pal Chat, OpenRouter-style apps) can render their own UI.
+          if (SHOW_REASONING && reasoning) {
+            finalMessage.reasoning = reasoning;
+            finalMessage.reasoning_content = reasoning;
+          } else {
+            delete finalMessage.reasoning;
+            delete finalMessage.reasoning_content;
+          }
+
           const finalChoice = {
             ...normalizedChoice,
             index: i,
-            message: { ...normalizedChoice.message, content }
+            message: finalMessage
           };
-          delete finalChoice.message.reasoning;
           return finalChoice;
         }),
         usage: response.data.usage || {
