@@ -1,3 +1,6 @@
+### THIS IS A TEST BRANCH WHERE I WILL TEST NEW FEATURES TO ADD, DO NOT FORK THIS AS IT IS EXPERIMENTAL AND MAY HAVE BUGS.
+
+
 ### Announcement 
 Due to personal health reasons, the old owner will no longer be able to maintain this project. However, for the time being, I’m gonna try to maintain this!! The original repository I forked from is https://github.com/Jontte6/nim-to-openai-proxy 
 
