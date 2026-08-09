@@ -173,7 +173,7 @@ class StreamNormalizer {
 
     // ONLY use content delimiters for models that embed reasoning in content
     if (model === 'qwen/qwen3.5-397b-a17b' || model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5') {
-      this.parser = new DelimiterParser('<think>', '</think>');
+      this.parser = new DelimiterParser('üd', 'üue');
     }
     // Models like Gemma 4, DeepSeek, GPT-OSS use structured fields and are NOT parsed here.
   }
@@ -216,7 +216,7 @@ function normalizeNonStreamChoice(choice, model) {
   if (!reasoning && content) {
     let parser = null;
     if (model === 'qwen/qwen3.5-397b-a17b' || model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5') {
-      parser = new DelimiterParser('<think>', '</think>');
+      parser = new DelimiterParser('üd', 'üue');
     }
 
     if (parser) {
@@ -260,7 +260,7 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     case 'qwen/qwen3.5-397b-a17b': {
       // Model appears to default to thinking-on in its chat template. Only send
       // a field when the caller explicitly wants thinking OFF; otherwise let the
-      // <think> delimiter parser handle whatever the model does natively.
+      // üd delimiter parser handle whatever the model does natively.
       if (enableThinking) return {};
       return { chat_template_kwargs: { enable_thinking: false } };
     }
@@ -399,9 +399,9 @@ async function validateModels() {
 
     for (const [alias, nimId] of Object.entries(MODEL_MAPPING)) {
       if (availableModels.has(nimId)) {
-        console.log(`[VALIDATION] ✓ ${alias} → ${nimId}`);
+        console.log(`[VALIDATION] ü ${alias} ā ${nimId}`);
       } else {
-        console.warn(`[VALIDATION] ✗ ${alias} → ${nimId} (not in catalog)`);
+        console.warn(`[VALIDATION] é ${alias} ā ${nimId} (not in catalog)`);
         invalid.push({ alias, nimId, error: 'Model not found in NIM catalog' });
       }
     }
@@ -422,7 +422,7 @@ async function sendDiscordAlert(invalidModels) {
   if (!DISCORD_WEBHOOK_URL) return;
 
   const embed = {
-    title: '⚠️ NIM Proxy: Model Validation Failed',
+    title: 'ö NIM Proxy: Model Validation Failed',
     description: `${invalidModels.length} model(s) failed validation. Check NIM catalog for deprecations.`,
     color: 0xff4444,
     timestamp: new Date().toISOString(),
@@ -526,6 +526,8 @@ app.post('/v1/chat/completions', async (req, res) => {
       stream
     } = req.body;
 
+    const inlineReasoning = req.get('x-reasoning-inline') === 'true';
+
     const primaryModel = MODEL_MAPPING[model] || 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
     const modelChain = [primaryModel, ...FALLBACK_MODELS];
 
@@ -589,18 +591,22 @@ app.post('/v1/chat/completions', async (req, res) => {
             let clientContent = '';
 
             if (SHOW_REASONING) {
-              if (normalizedDelta.reasoning && !reasoningOpen) {
-                clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
-                reasoningOpen = true;
-              } else if (normalizedDelta.reasoning) {
-                clientContent += normalizedDelta.reasoning;
-              }
+              if (inlineReasoning) {
+                if (normalizedDelta.reasoning && !reasoningOpen) {
+                  clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
+                  reasoningOpen = true;
+                } else if (normalizedDelta.reasoning) {
+                  clientContent += normalizedDelta.reasoning;
+                }
 
-              if (normalizedDelta.content && reasoningOpen) {
-                clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
-                reasoningOpen = false;
-              } else if (normalizedDelta.content) {
-                clientContent += normalizedDelta.content;
+                if (normalizedDelta.content && reasoningOpen) {
+                  clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
+                  reasoningOpen = false;
+                } else if (normalizedDelta.content) {
+                  clientContent += normalizedDelta.content;
+                }
+              } else {
+                clientContent = normalizedDelta.content || '';
               }
             } else {
               clientContent = normalizedDelta.content || '';
@@ -676,17 +682,21 @@ app.post('/v1/chat/completions', async (req, res) => {
         if (flushedDelta.content || flushedDelta.reasoning) {
           let clientContent = '';
           if (SHOW_REASONING) {
-            if (flushedDelta.reasoning && !reasoningOpen) {
-              clientContent += `<thinking>\n${flushedDelta.reasoning}`;
-              reasoningOpen = true;
-            } else if (flushedDelta.reasoning) {
-              clientContent += flushedDelta.reasoning;
-            }
-            if (flushedDelta.content && reasoningOpen) {
-              clientContent += `\n</thinking>\n\n${flushedDelta.content}`;
-              reasoningOpen = false;
-            } else if (flushedDelta.content) {
-              clientContent += flushedDelta.content;
+            if (inlineReasoning) {
+              if (flushedDelta.reasoning && !reasoningOpen) {
+                clientContent += `<thinking>\n${flushedDelta.reasoning}`;
+                reasoningOpen = true;
+              } else if (flushedDelta.reasoning) {
+                clientContent += flushedDelta.reasoning;
+              }
+              if (flushedDelta.content && reasoningOpen) {
+                clientContent += `\n</thinking>\n\n${flushedDelta.content}`;
+                reasoningOpen = false;
+              } else if (flushedDelta.content) {
+                clientContent += flushedDelta.content;
+              }
+            } else {
+              clientContent = flushedDelta.content || '';
             }
           } else {
             clientContent = flushedDelta.content || '';
@@ -717,117 +727,4 @@ app.post('/v1/chat/completions', async (req, res) => {
               type: 'stream_error'
             }
           })}\n\n`);
-          safeWrite(res, 'data: [DONE]\n\n');
-          res.end();
-        }
-        cleanup();
-      });
-
-      req.on('close', () => {
-        const clientGone = req.destroyed || !res.writable;
-
-        if (!streamEndedCleanly && clientGone) {
-          console.warn('[STREAM] Client disconnected prematurely');
-        }
-
-        if (upstreamStream && !upstreamStream.destroyed && !streamEndedCleanly) {
-          upstreamStream.destroy();
-        }
-        cleanup();
-      });
-
-    } else {
-      // Non-streaming response
-      const openaiResponse = {
-        id: `chatcmpl-${Date.now()}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: model,
-        choices: (response.data.choices || []).map((choice, i) => {
-          const normalizedChoice = normalizeNonStreamChoice(choice, usedModel);
-          let content = normalizedChoice.message?.content || '';
-          const reasoning = normalizedChoice.message?.reasoning || '';
-
-          if (SHOW_REASONING && reasoning) {
-            content = `<thinking>\n${reasoning}\n</thinking>\n\n${content}`;
-          }
-
-          const finalMessage = { ...normalizedChoice.message, content };
-
-          // Same fix as the streaming path: keep the structured field
-          // alongside the inline tags so structured-reasoning clients
-          // (Pal Chat, OpenRouter-style apps) can render their own UI.
-          if (SHOW_REASONING && reasoning) {
-            finalMessage.reasoning = reasoning;
-            finalMessage.reasoning_content = reasoning;
-          } else {
-            delete finalMessage.reasoning;
-            delete finalMessage.reasoning_content;
-          }
-
-          const finalChoice = {
-            ...normalizedChoice,
-            index: i,
-            message: finalMessage
-          };
-          return finalChoice;
-        }),
-        usage: response.data.usage || {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0
-        }
-      };
-
-      res.json(openaiResponse);
-    }
-
-  } catch (error) {
-    console.error('[PROXY] Fatal error:', error.message);
-    console.error('[PROXY] NIM response:', error.response?.data);
-
-    if (!res.headersSent) {
-      res.status(error.response?.status || 500).json({
-        error: {
-          message: error.message,
-          type: 'invalid_request_error',
-          code: error.response?.status || 500
-        }
-      });
-    } else if (!res.writableEnded) {
-      safeWrite(res, `data: ${JSON.stringify({
-        error: {
-          message: error.message,
-          type: 'proxy_error'
-        }
-      })}\n\n`);
-      safeWrite(res, 'data: [DONE]\n\n');
-      res.end();
-    }
-
-    if (upstreamStream && !upstreamStream.destroyed) {
-      upstreamStream.destroy();
-    }
-  }
-});
-
-app.use((req, res) => {
-  res.status(404).json({
-    error: {
-      message: `Endpoint ${req.method} ${req.path} not found`,
-      type: 'invalid_request_error',
-      code: 404
-    }
-  });
-});
-
-// ─── Startup ───────────────────────────────────────────────────────────────
-
-app.listen(PORT, () => {
-  console.log(`[PROXY] Hybrid proxy running on port ${PORT}`);
-  console.log(`[PROXY] Max tokens limit: ${MAX_TOKENS_LIMIT}`);
-
-  validateModels().catch(err => {
-    console.error('[VALIDATION] Startup check failed:', err.message);
-  });
-});
+          safeWrite(res, 'data: [DONE]\
