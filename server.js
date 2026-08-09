@@ -17,6 +17,12 @@
 //    left in as opt-in/best-effort since unrecognized chat_template_kwargs are typically just
 //    ignored by the backend rather than causing a hard failure, but flagged here so you know
 //    it's unverified if you ever go looking for why something isn't behaving.
+//
+// === REASONING OUTPUT FORMAT FIX (this revision) ===
+// 4. Fixed reasoning leaking into message content for clients that don't parse `<thinking>` tags.
+//    Default behavior is now clean `content` + structured `reasoning`/`reasoning_content` fields.
+//    GoonChat (or any legacy client that expects inline tags) can opt-in by sending the
+//    `x-reasoning-format: inline` header.
 
 const express = require('express');
 const cors = require('cors');
@@ -173,7 +179,7 @@ class StreamNormalizer {
 
     // ONLY use content delimiters for models that embed reasoning in content
     if (model === 'qwen/qwen3.5-397b-a17b' || model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5') {
-      this.parser = new DelimiterParser('üd', 'üue');
+      this.parser = new DelimiterParser('<think>', '</think>');
     }
     // Models like Gemma 4, DeepSeek, GPT-OSS use structured fields and are NOT parsed here.
   }
@@ -216,7 +222,7 @@ function normalizeNonStreamChoice(choice, model) {
   if (!reasoning && content) {
     let parser = null;
     if (model === 'qwen/qwen3.5-397b-a17b' || model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5') {
-      parser = new DelimiterParser('üd', 'üue');
+      parser = new DelimiterParser('<think>', '</think>');
     }
 
     if (parser) {
@@ -260,7 +266,7 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     case 'qwen/qwen3.5-397b-a17b': {
       // Model appears to default to thinking-on in its chat template. Only send
       // a field when the caller explicitly wants thinking OFF; otherwise let the
-      // üd delimiter parser handle whatever the model does natively.
+      // <think> delimiter parser handle whatever the model does natively.
       if (enableThinking) return {};
       return { chat_template_kwargs: { enable_thinking: false } };
     }
@@ -399,9 +405,9 @@ async function validateModels() {
 
     for (const [alias, nimId] of Object.entries(MODEL_MAPPING)) {
       if (availableModels.has(nimId)) {
-        console.log(`[VALIDATION] ü ${alias} ā ${nimId}`);
+        console.log(`[VALIDATION] ✓ ${alias} → ${nimId}`);
       } else {
-        console.warn(`[VALIDATION] é ${alias} ā ${nimId} (not in catalog)`);
+        console.warn(`[VALIDATION] ✗ ${alias} → ${nimId} (not in catalog)`);
         invalid.push({ alias, nimId, error: 'Model not found in NIM catalog' });
       }
     }
@@ -422,7 +428,7 @@ async function sendDiscordAlert(invalidModels) {
   if (!DISCORD_WEBHOOK_URL) return;
 
   const embed = {
-    title: 'ö NIM Proxy: Model Validation Failed',
+    title: '⚠️ NIM Proxy: Model Validation Failed',
     description: `${invalidModels.length} model(s) failed validation. Check NIM catalog for deprecations.`,
     color: 0xff4444,
     timestamp: new Date().toISOString(),
@@ -526,8 +532,6 @@ app.post('/v1/chat/completions', async (req, res) => {
       stream
     } = req.body;
 
-    const inlineReasoning = req.get('x-reasoning-inline') === 'true';
-
     const primaryModel = MODEL_MAPPING[model] || 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
     const modelChain = [primaryModel, ...FALLBACK_MODELS];
 
@@ -547,6 +551,9 @@ app.post('/v1/chat/completions', async (req, res) => {
     );
     upstreamStream = response.data;
     console.log('[PROXY] Model used:', usedModel);
+
+    // Determine if the client wants legacy inline <thinking> tags in the content stream
+    const inlineReasoning = req.headers['x-reasoning-format'] === 'inline';
 
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -590,32 +597,30 @@ app.post('/v1/chat/completions', async (req, res) => {
             const normalizedDelta = normalizer.processDelta(delta);
             let clientContent = '';
 
-            if (SHOW_REASONING) {
-              if (inlineReasoning) {
-                if (normalizedDelta.reasoning && !reasoningOpen) {
-                  clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
-                  reasoningOpen = true;
-                } else if (normalizedDelta.reasoning) {
-                  clientContent += normalizedDelta.reasoning;
-                }
+            if (SHOW_REASONING && inlineReasoning) {
+              // Legacy GoonChat behavior: bake <thinking> tags into content
+              if (normalizedDelta.reasoning && !reasoningOpen) {
+                clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
+                reasoningOpen = true;
+              } else if (normalizedDelta.reasoning) {
+                clientContent += normalizedDelta.reasoning;
+              }
 
-                if (normalizedDelta.content && reasoningOpen) {
-                  clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
-                  reasoningOpen = false;
-                } else if (normalizedDelta.content) {
-                  clientContent += normalizedDelta.content;
-                }
-              } else {
-                clientContent = normalizedDelta.content || '';
+              if (normalizedDelta.content && reasoningOpen) {
+                clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
+                reasoningOpen = false;
+              } else if (normalizedDelta.content) {
+                clientContent += normalizedDelta.content;
               }
             } else {
+              // Default behavior: clean content, no inline tags
               clientContent = normalizedDelta.content || '';
             }
 
             delta.content = clientContent;
 
             // FIX: keep a structured reasoning field alongside the inline
-            // <thinking> tags in content. GoonChat parses the inline tags;
+            // tags in content. GoonChat parses the inline tags;
             // clients like Pal Chat / OpenRouter-style apps look for a
             // separate `reasoning`/`reasoning_content` field to render their
             // own collapsible thinking UI. Without this, those clients just
@@ -681,24 +686,22 @@ app.post('/v1/chat/completions', async (req, res) => {
         const flushedDelta = normalizer.flush();
         if (flushedDelta.content || flushedDelta.reasoning) {
           let clientContent = '';
-          if (SHOW_REASONING) {
-            if (inlineReasoning) {
-              if (flushedDelta.reasoning && !reasoningOpen) {
-                clientContent += `<thinking>\n${flushedDelta.reasoning}`;
-                reasoningOpen = true;
-              } else if (flushedDelta.reasoning) {
-                clientContent += flushedDelta.reasoning;
-              }
-              if (flushedDelta.content && reasoningOpen) {
-                clientContent += `\n</thinking>\n\n${flushedDelta.content}`;
-                reasoningOpen = false;
-              } else if (flushedDelta.content) {
-                clientContent += flushedDelta.content;
-              }
-            } else {
-              clientContent = flushedDelta.content || '';
+          if (SHOW_REASONING && inlineReasoning) {
+            // Legacy GoonChat behavior: bake <thinking> tags into content
+            if (flushedDelta.reasoning && !reasoningOpen) {
+              clientContent += `<thinking>\n${flushedDelta.reasoning}`;
+              reasoningOpen = true;
+            } else if (flushedDelta.reasoning) {
+              clientContent += flushedDelta.reasoning;
+            }
+            if (flushedDelta.content && reasoningOpen) {
+              clientContent += `\n</thinking>\n\n${flushedDelta.content}`;
+              reasoningOpen = false;
+            } else if (flushedDelta.content) {
+              clientContent += flushedDelta.content;
             }
           } else {
+            // Default behavior: clean content, no inline tags
             clientContent = flushedDelta.content || '';
           }
           if (clientContent) {
@@ -728,3 +731,119 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
           })}\n\n`);
           safeWrite(res, 'data: [DONE]\n\n');
+          res.end();
+        }
+        cleanup();
+      });
+
+      req.on('close', () => {
+        const clientGone = req.destroyed || !res.writable;
+
+        if (!streamEndedCleanly && clientGone) {
+          console.warn('[STREAM] Client disconnected prematurely');
+        }
+
+        if (upstreamStream && !upstreamStream.destroyed && !streamEndedCleanly) {
+          upstreamStream.destroy();
+        }
+        cleanup();
+      });
+
+    } else {
+      // Non-streaming response
+      const openaiResponse = {
+        id: `chatcmpl-${Date.now()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: model,
+        choices: (response.data.choices || []).map((choice, i) => {
+          const normalizedChoice = normalizeNonStreamChoice(choice, usedModel);
+          let content = normalizedChoice.message?.content || '';
+          const reasoning = normalizedChoice.message?.reasoning || '';
+
+          if (SHOW_REASONING && inlineReasoning && reasoning) {
+            // Legacy GoonChat behavior: bake <thinking> tags into content
+            content = `<thinking>\n${reasoning}\n</thinking>\n\n${content}`;
+          }
+
+          const finalMessage = { ...normalizedChoice.message, content };
+
+          // Same fix as the streaming path: keep the structured field
+          // alongside the inline tags so structured-reasoning clients
+          // (Pal Chat, OpenRouter-style apps) can render their own UI.
+          if (SHOW_REASONING && reasoning) {
+            finalMessage.reasoning = reasoning;
+            finalMessage.reasoning_content = reasoning;
+          } else {
+            delete finalMessage.reasoning;
+            delete finalMessage.reasoning_content;
+          }
+
+          const finalChoice = {
+            ...normalizedChoice,
+            index: i,
+            message: finalMessage
+          };
+          return finalChoice;
+        }),
+        usage: response.data.usage || {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0
+        }
+      };
+
+      res.json(openaiResponse);
+    }
+
+  } catch (error) {
+    console.error('[PROXY] Fatal error:', error.message);
+    console.error('[PROXY] NIM response:', error.response?.data);
+
+    if (!res.headersSent) {
+      res.status(error.response?.status || 500).json({
+        error: {
+          message: error.message,
+          type: 'invalid_request_error',
+          code: error.response?.status || 500
+        }
+      });
+    } else if (!res.writableEnded) {
+      safeWrite(res, `data: ${JSON.stringify({
+        error: {
+          message: error.message,
+          type: 'proxy_error'
+        }
+      })}\n\n`);
+      safeWrite(res, 'data: [DONE]\n\n');
+      res.end();
+    }
+
+    if (upstreamStream && !upstreamStream.destroyed) {
+      upstreamStream.destroy();
+    }
+  }
+});
+
+app.use((req, res) => {
+  res.status(404).json({
+    error: {
+      message: `Endpoint ${req.method} ${req.path} not found`,
+      type: 'invalid_request_error',
+      code: 404
+    }
+  });
+});
+
+// ─── Startup ───────────────────────────────────────────────────────────────
+
+app.listen(PORT, () => {
+  console.log(`[PROXY] Hybrid proxy running on port ${PORT}`);
+  console.log(`[PROXY] Max tokens limit: ${MAX_TOKENS_LIMIT}`);
+
+  validateModels().catch(err => {
+    console.error('[VALIDATION] Startup check failed:', err.message);
+  });
+});
+
+ 
