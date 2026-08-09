@@ -1,22 +1,17 @@
-### THIS IS A TEST BRANCH WHERE I WILL TEST NEW FEATURES TO ADD, DO NOT FORK THIS AS IT IS EXPERIMENTAL AND MAY HAVE BUGS.
-
-
 ### Announcement 
-Due to personal health reasons, the old owner will no longer be able to maintain this project. However, for the time being, I’m gonna try to maintain this!! The original repository I forked from is https://github.com/Jontte6/nim-to-openai-proxy 
-
+Due to personal health reasons, the project will no longer be maintained by the old owner (Jontte), I’ll try to maintain this for the time being however!!
 
 ### If you forked before June 7, 2026, please pull the latest version — previous versions had an auth bypass and startup DDoS vulnerability.
 
-### Guys. Just don't use reasoning at this point. There's not a single standard that nim follows that I could make use of. The reasoning on one model works, then I fix it for the other and the first breaks. I’ll try to see if I can fix it but don’t count on it.
+### Reasoning officially works! Aside from Gemma and M3, every model (that supports reasoning) works. To set reasoning, use the enviornmental variables provided (ENABLE_THINKING_MODE = true, SHOW_REASONING = true)
 
 
 ### NVIDIA NIM to OpenAI Proxy
-Hello, this is my first ever project on Github that I am making public. This is essentially just a translation layer between the API format that NVIDIA NIM uses to the format OpenAI uses. Jontte made this originally by building on a script from a Reddit guide. Over the time of a month he had iterated on it, fixed problems, added auth, more models, and removed/replaced deprecated models.
+Hello, this is my first ever project on Github that I am making public. This is essentially just a translation layer between the API format that NVIDIA NIM uses to the format OpenAI uses. Jontte made this originally by building on a script from a Reddit guide. Over the time of a month he iterated on it, fixed problems, added auth, more models, and removed/replaced deprecated models.
 These are the current available models for usage, and the use cases for all of them. (Note: The Google models are mostly for troubleshooting issues with latency and timeouts.)
 
 ### Why use this proxy?
-
-A lot of frontends such as JanitorAI requires an OpenAI-compatible proxy to use NVIDIA NIM. SillyTavern can connect to NIM directly, but if you use **Lorebary** for prompts, lorebooks, or plugins, this proxy is necessary — Lorebary does not support NIM natively. Various other frontends for coding and other things also may bug with NIM.
+Many frontends such as JanitorAI requires an OpenAI-compatible proxy to use NVIDIA NIM. SillyTavern can connect to NIM directly, but if you use **Lorebary** for prompts, lorebooks, or plugins, this proxy is necessary — Lorebary does not support NIM natively. Various other frontends that aren’t even related to RP may also not work with NIM.
 
 ### Legality
 
@@ -33,7 +28,7 @@ Node.js 24+, a NVAPI/Nim API key, a deployment platform (though if you follow th
 |---|---|---|---|---|
 | `gpt-4-turbo` | `moonshotai/kimi-k2.6` | Deep, immersive RP | Medium | Medium-High |
 | `gpt-4` | `nvidia/nemotron-3-ultra-550b-a55b` | Immersive RP | Fast | Low |
-| `gpt-4o` | `deepseek-ai/deepseek-v4-pro` |
+| `gpt-4o` | `deepseek-ai/deepseek-v4-pro` | Coding, non-edgy RP | Slow | High |
 | `gpt-4-flash` | `deepseek-ai/deepseek-v4-flash` | Fast, non-edgy RP | Fast | High |
 | `gpt-3.5o` | `nvidia/nemotron-mini-4b-instruct` | Lightweight RP, fast responses | Very Fast | Low |
 | `gemini-pro` | `nvidia/llama-3.3-nemotron-super-49b-v1.5` | Daily driver, low latency | Fast | Low |
@@ -59,13 +54,13 @@ Node.js 24+, a NVAPI/Nim API key, a deployment platform (though if you follow th
 
 ### Filter Guide
 
-| If your use case involves... | Avoid | Use instead |
+| If your use-case involves... | Avoid | Use instead |
 |---|---|---|
 | Dark themes, violence, mature content | `gpt-4o`, `gpt-4-flash`, `gpt-4-turbo` (They have high filters due to being based in China) | `mistral`, `gemini-pro`, `claude-3-opus` |
 | Fast responses needed | `mistral` (675B) | `gemini-pro`, `mistral-turbo`, `gpt-3.5o` |
-| Long context / memory | Anything under 30B | `gpt-4-turbo`, `mistral`, `gpt-4`, `glm-5.2` |
+| Long context / memory | Anything under 30B | `gpt-4-turbo`, `mistral`, `gpt-4`, `gpt-4o`, `glm-5.2` |
 | Testing / very fast replies | — | `google-lightest`, `gpt-3.5o` |
-| Coding / Long horizon work | — | `glm-5.2` |
+| Coding / Long horizon work | — | `glm-5.2`, `gpt-4o` |
 
 ### Fallback Chain
 
@@ -86,7 +81,8 @@ You can easily generate the hash with an online SHA-256 generator or any hash to
 
 Firstly head to https://build.nvidia.com/ and login/create an account. Then click your profile icon and navigate to "API keys". There you can generate an API key, and label it whatever you want. Save it immediately — you'll need to regenerate it if lost.
 
-You *can* use basically any service that allows cloud deployments/VMs with a static IP, but I recommend Railway, Render, and Vercel (which I personally use). Possibly Oracle if you are comfortable with SSH and value the freedom it gives, but Railway is the easiest to setup.
+You *can* use basically any service that allows cloud deployments/VMs with a static IP, but I recommend Railway, Render, Vercel (which I personally use!).
+and possibly Oracle if you are comfortable with SSH and value the freedom it gives, but Railway is the easiest to setup.
 You need to login to Railway with your Github. **Fork the repo before deploying. I cannot see your env vars, but forking ensures your deployment is fully isolated!** This prevents me (or anyone) from seeing your deployment in Railway's dashboard or through github. I also recommend making sure deployments aren't visible on the frontpage.
 After you have made a deployment, you need to wait around 3 minutes for it to finish deploying. Then go into the "variables" tab, and create an env var with the name "NIM_API_KEY", and enter your NVAPI key into the variable. Next in your deployment go to the settings page, and there the networking section. Generate a public URL for your deployment. This is necessary to access it. Now your proxy is ready.
 
@@ -97,7 +93,7 @@ The client never sees your NVAPI key, which is why we don't use it as the auth, 
 
 ### Optional Environment Variables
 
-After deploying, you can set these in Railway's **Variables** tab (reasoning does not work reliably):
+After deploying, you can set these in Railway's **Variables** tab:
 
 | Variable | Value | Effect |
 |---|---|---|
@@ -122,7 +118,7 @@ Set to `false` or remove to disable. Changes apply without redeploying.
 
 ## Contributing
 
-This is a project I am maintaining for my own use, but I'm happy if it helps others. If you spot a bug, want to suggest a model mapping, or have a small improvement, feel free to open an issue or PR. I will try to be as fast as possible as responses, but again, don’t count on it since I maintain this in my free time. I have many other projects i’m working on at the same time, but I'll do my best.
+This is a personal project I am maintaining for my own use, but I'm happy if it helps others. If you spot a bug, want to suggest a model mapping, or have a small improvement, feel free to open an issue or PR. I’ll attempt to respond to you pretty fast, I can’t promise ultra-fast responses but I’ll do my best.
 
 ### What I'm open to
 - Model mapping updates (NIM deprecates things constantly)
@@ -131,7 +127,7 @@ This is a project I am maintaining for my own use, but I'm happy if it helps oth
 - Documentation improvements
 
 ### What I'm less likely to merge
-- Major architectural changes (I want to keep this simple as to honour Jontte’s wishes)
+- Major architectural changes (I want to keep this simple as to honour Jontte’s wishes.)
 - Features I don't personally use (harder for me to maintain)
 - Anything that adds complexity without clear benefit
 
@@ -146,8 +142,8 @@ When reporting bugs, include:
 - Your deployment platform (Railway, Render, etc.)
 
 ## Contact
-Need to reach out faster? Add me on Discord (Username - `Skywalker_1401`)
+Need to reach out faster? Add me on Discord, my username is - `Skywalker_1401`. I’ll respond faster on Discord than Github.
 
 ## Disclaimer
 
-I am not a professional developer, this whole project was made by Jontte, so all credits to him! I’m going to maintain this for the time being. Jontte made this project via the help of AI tools and community guides as well.
+I am not a professional developer. This whole project was made by Jontte, I’m just the current maintainer. Jontte made this project with the help of AI tools and community guides. 
