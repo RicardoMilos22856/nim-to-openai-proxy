@@ -727,4 +727,4 @@ app.post('/v1/chat/completions', async (req, res) => {
               type: 'stream_error'
             }
           })}\n\n`);
-          safeWrite(res, 'data: [DONE]\
+          safeWrite(res, 'data: [DONE]\n\n');
