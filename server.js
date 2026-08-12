@@ -1,7 +1,6 @@
-
 // server.js — OpenAI-compatible proxy for NVIDIA NIM
 // Express 5 compatible.
-
+//mr larp himself 
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -16,7 +15,6 @@ const PORT = process.env.PORT || 3000;
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 const CLIENT_AUTH_KEY = process.env.CLIENT_AUTH_KEY;
-const SHOW_REASONING = process.env.SHOW_REASONING === 'true';
 const ENABLE_THINKING_MODE = process.env.ENABLE_THINKING_MODE === 'true';
 const SKIP_VALIDATION = process.env.SKIP_VALIDATION === 'true';
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
@@ -26,7 +24,6 @@ const REQUEST_TIMEOUT_MS = 180000;
 const VALIDATION_TIMEOUT_MS = 15000;
 const MAX_BUFFER_SIZE = 1024 * 1024; // 1MB
 
-if (SHOW_REASONING) console.log('[CONFIG] Reasoning display: ENABLED');
 if (ENABLE_THINKING_MODE) console.log('[CONFIG] Thinking mode: ENABLED');
 
 // ─── Config validation ──────────────────────────────────────────────────────
@@ -79,6 +76,16 @@ const FALLBACK_MODELS = [
   'nvidia/llama-3.3-nemotron-super-49b-v1.5',
   'google/gemma-4-31b-it'
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Reasoning subsystem (merged from reasoning.js) ────────────────────────
+// Owns: which chat_template_kwargs/top-level fields each backend model needs
+// to control thinking, and how to pull reasoning text back out of responses
+// that embed it inline vs. as a structured field.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SHOW_REASONING = process.env.SHOW_REASONING === 'true';
+if (SHOW_REASONING) console.log('[CONFIG] Reasoning display: ENABLED');
 
 // ─── Reasoning subsystem notes ─────────────────────────────────────────────
 // Reasoning/thinking parameters vary by backend model and aren't part of the
@@ -297,7 +304,7 @@ const REASONING_EFFORT_ENUMS = {
   // "low_effort" middle tier between full reasoning and off.
   'nvidia/nemotron-3-super-120b-a12b': ['low'],
   'nvidia/nemotron-3-ultra-550b-a55b': ['low'],
-  // MiniMax-M3's only non-binary option: let the model decide per-turn.
+  // MiniMax-M3's only option: let the model decide per-turn. but it may kinda not work 
   'minimaxai/minimax-m3': ['adaptive']
 };
 
@@ -315,8 +322,28 @@ function validReasoningEffort(model, effort) {
 // IMPORTANT: everything returned here gets spread DIRECTLY into the top-level
 // JSON body sent to NIM via axios. Do NOT wrap anything in an `extra_body` key —
 // see the reasoning subsystem notes above.
+//
+// UNIVERSAL CLIENT OVERRIDE: reasoning_effort: "off" / "on" forces thinking
+// off/on for that one request, regardless of the server's ENABLE_THINKING_MODE
+// default. This exists because, before it was added, the on/off decision for
+// 8 of the 10 reasoning models below (everything except mistral's accidental
+// "none" and M3's "adaptive") was wired to the server env var ONLY — a
+// client-side reasoning toggle in any chat UI had no field it could send that
+// actually changed anything for those models. "off"/"on" are stripped before
+// running the model-specific effort enum check below, so they never collide
+// with a real per-model value like "high" or "adaptive".
+//
+// Caveat: gpt-oss models structurally always emit a reasoning channel — this
+// can reduce them to their baseline default but can't literally eliminate
+// reasoning tokens the way it can for every other model here.
 function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools) {
-  const effort = validReasoningEffort(model, clientReasoningEffort);
+  if (clientReasoningEffort === 'off') enableThinking = false;
+  else if (clientReasoningEffort === 'on') enableThinking = true;
+
+  const rawEffort = (clientReasoningEffort === 'off' || clientReasoningEffort === 'on')
+    ? undefined
+    : clientReasoningEffort;
+  const effort = validReasoningEffort(model, rawEffort);
 
   switch (model) {
     case 'nvidia/nemotron-3-super-120b-a12b': {
@@ -413,6 +440,228 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     default:
       // Default reasoning models (Kimi, MiniMax, etc.) or non-reasoning models
       return {};
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ─── Tool calling (Hermes-style <tool_call> handling) ──────────────────────
+//
+// Why this exists: NIM only runs a server-side tool-call parser (converting
+// raw model output into a structured `tool_calls` field) for a whitelisted
+// subset of models. Everything else on this proxy's model list is NOT on
+// that whitelist. Two failure modes result:
+//
+//   1. The model's chat template doesn't render the `tools` field into the
+//      prompt at all, so the model has no idea any functions exist ("it says
+//      it can't access tools and sees none").
+//   2. The model's chat template DOES render `tools` (most modern open-weight
+//      chat templates support this now), the model correctly decides to call
+//      a function, and emits it in the exact format it was fine-tuned on —
+//      which for the vast majority of these models is the Hermes format:
+//        <tool_call>
+//        {"name": "...", "arguments": {...}}
+//        </tool_call>
+//      — but since there's no NIM-side parser for these models, that raw text
+//      just lands in `content` verbatim instead of `tool_calls`.
+//
+// Fix, in two parts:
+//   - injectToolsIntoMessages(): manually write the tool schemas into a
+//     system message ourselves, so every model sees them regardless of
+//     whether its chat template natively supports the `tools` kwarg. This
+//     also means the `tools`/`tool_choice` fields are still forwarded as-is
+//     to NIM on top of this — harmless for models NIM already handles
+//     natively (our injected text is just redundant with what NIM's own
+//     template does), and load-bearing for everything else.
+//   - ToolCallParser / extractToolCallsFromText: mirrors DelimiterParser
+//     above, but for <tool_call> tags instead of <think> tags. Runs AFTER
+//     reasoning extraction, on whatever `content` is left. Only kicks in
+//     when the model didn't already return native structured `tool_calls`
+//     (so it never clobbers a response from a model NIM already parses).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TOOL_CALL_OPEN_TAG = '<tool_call>';
+const TOOL_CALL_CLOSE_TAG = '</tool_call>';
+const DEBUG_TOOLCALLS = process.env.DEBUG_TOOLCALLS === 'true';
+
+function buildToolsSystemPrompt(tools, tool_choice) {
+  const toolDefs = tools
+    .filter(t => t && t.type === 'function' && t.function)
+    .map(t => JSON.stringify(t.function))
+    .join('\n');
+
+  let forcedLine = '';
+  if (tool_choice && typeof tool_choice === 'object' && tool_choice.function && tool_choice.function.name) {
+    forcedLine = `\nFor this turn you MUST call the "${tool_choice.function.name}" function.`;
+  } else if (tool_choice === 'required') {
+    forcedLine = '\nFor this turn you MUST call one of the functions above — do not respond in plain text only.';
+  }
+
+  return [
+    'You have access to function tools. When a function call is needed, respond with ONLY a JSON object wrapped in <tool_call></tool_call> tags — no other text in that turn.',
+    '',
+    'Available functions:',
+    '<tools>',
+    toolDefs,
+    '</tools>',
+    '',
+    'Call format (arguments is an object matching the function\'s parameters schema):',
+    '<tool_call>',
+    '{"name": "<function-name>", "arguments": {<argument object>}}',
+    '</tool_call>',
+    '',
+    'Emit one <tool_call> block per function call. Chain multiple blocks back to back if more than one call is needed in the same turn. If no function applies, just answer normally with no <tool_call> tags.' + forcedLine
+  ].join('\n');
+}
+
+// Merges the tool-definition system prompt into the outgoing messages array.
+// Appends to an existing system message if present, otherwise prepends a new one.
+function injectToolsIntoMessages(messages, tools, tool_choice) {
+  const toolPrompt = buildToolsSystemPrompt(tools, tool_choice);
+  const msgs = Array.isArray(messages) ? [...messages] : [];
+  const systemIdx = msgs.findIndex(m => m.role === 'system');
+
+  if (systemIdx !== -1) {
+    msgs[systemIdx] = {
+      ...msgs[systemIdx],
+      content: `${msgs[systemIdx].content}\n\n${toolPrompt}`
+    };
+  } else {
+    msgs.unshift({ role: 'system', content: toolPrompt });
+  }
+  return msgs;
+}
+
+// Builds one OpenAI-shaped tool_calls entry from the raw JSON text found
+// inside a <tool_call>...</tool_call> block. Throws on malformed JSON or a
+// missing "name" field so callers can catch-and-skip rather than emit junk.
+function buildToolCallEntry(rawJson, index) {
+  const parsed = JSON.parse(rawJson.trim());
+  if (!parsed || typeof parsed.name !== 'string') {
+    throw new Error('tool_call JSON missing "name" field');
+  }
+  return {
+    index,
+    id: `call_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+    type: 'function',
+    function: {
+      name: parsed.name,
+      arguments: JSON.stringify(parsed.arguments ?? {})
+    }
+  };
+}
+
+// Non-streaming: the full text is available up front, so a simple global
+// regex pass is enough — no need for the stateful buffering the streaming
+// path requires below.
+function extractToolCallsFromText(content) {
+  if (!content) return { content, toolCalls: [] };
+  const regex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
+  const toolCalls = [];
+  let match;
+  let index = 0;
+
+  while ((match = regex.exec(content)) !== null) {
+    try {
+      toolCalls.push(buildToolCallEntry(match[1], index));
+      index++;
+    } catch (err) {
+      console.warn('[TOOLCALL] Failed to parse tool_call JSON:', match[1].slice(0, 200), err.message);
+    }
+  }
+
+  if (toolCalls.length === 0) return { content, toolCalls };
+
+  const cleaned = content.replace(regex, '').trim();
+  if (DEBUG_TOOLCALLS) console.log(`[TOOLCALL] Extracted ${toolCalls.length} call(s) from non-stream response`);
+  return { content: cleaned, toolCalls };
+}
+
+// Streaming: same delimiter-scanning shape as DelimiterParser above, but the
+// payload inside the tags has to be complete, valid JSON before it's usable.
+// Unlike reasoning text (which can just stream straight through), the whole
+// block gets buffered and released as a single tool_calls delta once the
+// closing tag arrives, rather than token-by-token. This is still valid
+// OpenAI-shaped streaming — clients accumulate delta.tool_calls by index,
+// they don't require single-token increments — it's just delivered as one
+// burst instead of a trickle.
+class ToolCallParser {
+  constructor() {
+    this.buffer = '';
+    this.inToolCall = false;
+    this.toolCallIndex = 0;
+    this.foundAny = false;
+  }
+
+  _partialSuffixLen(target) {
+    const maxLen = Math.min(this.buffer.length, target.length - 1);
+    for (let i = maxLen; i > 0; i--) {
+      if (target.startsWith(this.buffer.slice(-i))) return i;
+    }
+    return 0;
+  }
+
+  // NOTE: this deliberately does NOT reuse DelimiterParser's "emit before-text
+  // immediately, hold back only a partial-tag suffix" pattern. That pattern
+  // is fine for reasoning text, which just streams straight through as loose
+  // text either way. It's wrong here: while inToolCall, the text in between
+  // the tags is not done accumulating until the closing tag shows up — it
+  // has to be handed to JSON.parse as one intact string, so nothing inside
+  // an open <tool_call> block gets touched or trimmed until it closes.
+  processChunk(chunk) {
+    this.buffer += chunk;
+    let content = '';
+    const toolCalls = [];
+
+    while (true) {
+      if (!this.inToolCall) {
+        const openIdx = this.buffer.indexOf(TOOL_CALL_OPEN_TAG);
+        if (openIdx !== -1) {
+          content += this.buffer.slice(0, openIdx);
+          this.buffer = this.buffer.slice(openIdx + TOOL_CALL_OPEN_TAG.length);
+          this.inToolCall = true;
+          continue;
+        }
+        // No open tag yet — hold back a possible partial "<tool_c" style
+        // suffix so it doesn't leak into visible content, emit the rest.
+        const partial = this._partialSuffixLen(TOOL_CALL_OPEN_TAG);
+        content += this.buffer.slice(0, this.buffer.length - partial);
+        this.buffer = this.buffer.slice(this.buffer.length - partial);
+        break;
+      } else {
+        const closeIdx = this.buffer.indexOf(TOOL_CALL_CLOSE_TAG);
+        if (closeIdx !== -1) {
+          const jsonText = this.buffer.slice(0, closeIdx);
+          try {
+            toolCalls.push(buildToolCallEntry(jsonText, this.toolCallIndex++));
+            this.foundAny = true;
+            if (DEBUG_TOOLCALLS) console.log('[TOOLCALL] Parsed streamed tool call:', jsonText.slice(0, 200));
+          } catch (err) {
+            console.warn('[TOOLCALL] Failed to parse streamed tool_call JSON:', jsonText.slice(0, 200), err.message);
+          }
+          this.buffer = this.buffer.slice(closeIdx + TOOL_CALL_CLOSE_TAG.length);
+          this.inToolCall = false;
+          continue;
+        }
+        // Still inside the block with no closing tag yet — keep the whole
+        // thing sitting in this.buffer untouched, nothing to emit this round.
+        break;
+      }
+    }
+
+    return { content, toolCalls };
+  }
+
+  flush() {
+    let content = '';
+    if (this.buffer) {
+      if (this.inToolCall) {
+        console.warn('[TOOLCALL] Stream ended mid tool_call block, discarding incomplete JSON:', this.buffer.slice(0, 200));
+      } else {
+        content = this.buffer;
+      }
+      this.buffer = '';
+    }
+    return { content };
   }
 }
 
@@ -571,10 +820,14 @@ function safeWrite(res, data) {
 
 async function callWithFallback(baseRequest, models, enableThinking, clientReasoningEffort, hasTools) {
   let lastError = null;
+  const debugReasoning = process.env.DEBUG_REASONING === 'true';
 
   for (const model of models) {
     try {
       const reasoningPayload = getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools);
+      if (debugReasoning) {
+        console.log(`[REASONING] Attempting ${model} with payload:`, JSON.stringify(reasoningPayload));
+      }
       const res = await axios.post(
         `${NIM_API_BASE}/chat/completions`,
         { ...baseRequest, model, ...reasoningPayload },
@@ -604,7 +857,7 @@ async function callWithFallback(baseRequest, models, enableThinking, clientReaso
 // ─── Routes ────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: '2.3.0' });
+  res.json({ status: 'ok', version: '2.4.0' });
 });
 
 app.get('/v1/models', (req, res) => {
@@ -649,14 +902,29 @@ app.post('/v1/chat/completions', async (req, res) => {
     // twice before actually diversifying.
     const modelChain = [...new Set([primaryModel, ...FALLBACK_MODELS])];
 
+    // hasTools: raw "did the client define any tools" flag — used for the
+    // nemotron force_nonempty_content hint and for whether we forward
+    // tools/tool_choice upstream at all.
+    // toolCallsEnabled: whether OUR injection + parsing layer should run.
+    // Stays off when tool_choice is explicitly "none" — the client is saying
+    // don't call anything this turn, so don't push tool instructions into
+    // the prompt or go hunting for <tool_call> tags in the reply.
+    const hasTools = !!(tools && tools.length > 0);
+    const toolCallsEnabled = hasTools && tool_choice !== 'none';
+
+    const effectiveMessages = toolCallsEnabled
+      ? injectToolsIntoMessages(messages, tools, tool_choice)
+      : messages;
+
     const baseRequest = {
-      messages,
+      messages: effectiveMessages,
       temperature: temperature ?? 0.7,
       max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
       stream: stream || false,
-      // Forward tool-calling fields as-is. Without this, clients using
-      // function/tool calling silently get a plain chat completion back —
-      // NIM never sees the tool definitions, so it never returns tool_calls.
+      // Forward tool-calling fields as-is too. Harmless for the handful of
+      // NIM-whitelisted models that natively support this (redundant with
+      // our own injected system prompt, but doesn't break anything); load
+      // bearing for nothing since our injection covers the general case.
       ...(tools && { tools }),
       ...(tool_choice && { tool_choice })
     };
@@ -666,7 +934,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       modelChain,
       ENABLE_THINKING_MODE,
       req.body.reasoning_effort,
-      !!tools
+      hasTools
     );
 
     upstreamStream = response.data;
@@ -686,6 +954,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       let doneSent = false;
       let cleanedUp = false;
       const normalizer = new StreamNormalizer(usedModel);
+      const toolCallParser = toolCallsEnabled ? new ToolCallParser() : null;
 
       const cleanup = () => {
         if (cleanedUp) return;
@@ -718,6 +987,20 @@ app.post('/v1/chat/completions', async (req, res) => {
 
           if (delta) {
             const normalizedDelta = normalizer.processDelta(delta);
+            let cleanContent = normalizedDelta.content || '';
+
+            // Only run our <tool_call> text parser when the upstream chunk
+            // didn't already hand back native structured tool_calls — if it
+            // did (one of NIM's whitelisted models), trust it as-is and
+            // don't touch it.
+            const hasNativeToolCalls = !!delta.tool_calls;
+            let extractedToolCalls = [];
+            if (toolCallParser && !hasNativeToolCalls) {
+              const parsed = toolCallParser.processChunk(cleanContent);
+              cleanContent = parsed.content;
+              extractedToolCalls = parsed.toolCalls;
+            }
+
             let clientContent = '';
 
             if (SHOW_REASONING && inlineReasoning) {
@@ -730,18 +1013,24 @@ app.post('/v1/chat/completions', async (req, res) => {
                 clientContent += normalizedDelta.reasoning;
               }
 
-              if (normalizedDelta.content && reasoningOpen) {
-                clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
+              if (cleanContent && reasoningOpen) {
+                clientContent += `\n</thinking>\n\n${cleanContent}`;
                 reasoningOpen = false;
-              } else if (normalizedDelta.content) {
-                clientContent += normalizedDelta.content;
+              } else if (cleanContent) {
+                clientContent += cleanContent;
               }
             } else {
               // Default behavior: clean content, no inline tags
-              clientContent = normalizedDelta.content || '';
+              clientContent = cleanContent;
             }
 
             delta.content = clientContent;
+
+            if (extractedToolCalls.length > 0) {
+              delta.tool_calls = extractedToolCalls;
+            }
+            // else: leave delta.tool_calls exactly as upstream sent it
+            // (untouched if native, absent if there was never any).
 
             // Keep a structured reasoning field alongside inline tags in
             // content. Some clients parse the inline <thinking> tags;
@@ -754,6 +1043,17 @@ app.post('/v1/chat/completions', async (req, res) => {
             } else {
               delete delta.reasoning;
               delete delta.reasoning_content;
+            }
+          }
+
+          // Once we've extracted at least one tool call from this response,
+          // the eventual finish_reason chunk (usually "stop") needs to read
+          // "tool_calls" instead, per the OpenAI spec — otherwise clients
+          // that gate tool execution on finish_reason never fire.
+          if (toolCallParser && toolCallParser.foundAny) {
+            const choice = data.choices?.[0];
+            if (choice && choice.finish_reason) {
+              choice.finish_reason = 'tool_calls';
             }
           }
 
@@ -803,43 +1103,64 @@ app.post('/v1/chat/completions', async (req, res) => {
           }
         }
 
-        const flushedDelta = normalizer.flush();
-        if (flushedDelta.content || flushedDelta.reasoning) {
+        const flushedNormalizer = normalizer.flush();
+        let flushedContent = flushedNormalizer.content || '';
+        let flushedToolCalls = [];
+
+        if (toolCallParser) {
+          // Run any trailing normalizer-flushed text through the tool-call
+          // parser too (catches a <tool_call> block that completes exactly
+          // at stream end), then flush the tool-call parser itself in case
+          // the model got cut off mid-block (e.g. hit max_tokens inside the
+          // JSON) — flush() just discards that incomplete fragment rather
+          // than emitting broken JSON as a tool call.
+          const parsed = toolCallParser.processChunk(flushedContent);
+          flushedContent = parsed.content;
+          flushedToolCalls = parsed.toolCalls;
+          const finalFlush = toolCallParser.flush();
+          flushedContent += finalFlush.content;
+        }
+
+        if (flushedContent || flushedNormalizer.reasoning || flushedToolCalls.length > 0) {
           let clientContent = '';
 
           if (SHOW_REASONING && inlineReasoning) {
             // Inline reasoning format: bake <thinking> tags into content.
-            if (flushedDelta.reasoning && !reasoningOpen) {
-              clientContent += `<thinking>\n${flushedDelta.reasoning}`;
+            if (flushedNormalizer.reasoning && !reasoningOpen) {
+              clientContent += `<thinking>\n${flushedNormalizer.reasoning}`;
               reasoningOpen = true;
-            } else if (flushedDelta.reasoning) {
-              clientContent += flushedDelta.reasoning;
+            } else if (flushedNormalizer.reasoning) {
+              clientContent += flushedNormalizer.reasoning;
             }
 
-            if (flushedDelta.content && reasoningOpen) {
-              clientContent += `\n</thinking>\n\n${flushedDelta.content}`;
+            if (flushedContent && reasoningOpen) {
+              clientContent += `\n</thinking>\n\n${flushedContent}`;
               reasoningOpen = false;
-            } else if (flushedDelta.content) {
-              clientContent += flushedDelta.content;
+            } else if (flushedContent) {
+              clientContent += flushedContent;
             }
           } else {
             // Default behavior: clean content, no inline tags
-            clientContent = flushedDelta.content || '';
+            clientContent = flushedContent;
           }
 
           const finalChunk = { choices: [{ delta: {} }] };
           if (clientContent) finalChunk.choices[0].delta.content = clientContent;
+          if (flushedToolCalls.length > 0) {
+            finalChunk.choices[0].delta.tool_calls = flushedToolCalls;
+            finalChunk.choices[0].finish_reason = 'tool_calls';
+          }
 
           // Mirror the per-chunk handling above: leftover reasoning text
           // must also reach structured-format clients, not just get folded
           // into inline tags. Previously this was dropped entirely whenever
           // SHOW_REASONING was on but inlineReasoning was off.
-          if (SHOW_REASONING && !inlineReasoning && flushedDelta.reasoning) {
-            finalChunk.choices[0].delta.reasoning = flushedDelta.reasoning;
-            finalChunk.choices[0].delta.reasoning_content = flushedDelta.reasoning;
+          if (SHOW_REASONING && !inlineReasoning && flushedNormalizer.reasoning) {
+            finalChunk.choices[0].delta.reasoning = flushedNormalizer.reasoning;
+            finalChunk.choices[0].delta.reasoning_content = flushedNormalizer.reasoning;
           }
 
-          if (Object.keys(finalChunk.choices[0].delta).length > 0) {
+          if (Object.keys(finalChunk.choices[0].delta).length > 0 || finalChunk.choices[0].finish_reason) {
             safeWrite(res, `data: ${JSON.stringify(finalChunk)}\n\n`);
           }
         }
@@ -903,12 +1224,33 @@ app.post('/v1/chat/completions', async (req, res) => {
           let content = normalizedChoice.message?.content || '';
           const reasoning = normalizedChoice.message?.reasoning || '';
 
+          let toolCalls = normalizedChoice.message?.tool_calls;
+          let finishReason = normalizedChoice.finish_reason;
+
+          // Same rule as streaming: only go hunting for <tool_call> text if
+          // the upstream response didn't already return native structured
+          // tool_calls.
+          if (toolCallsEnabled && !toolCalls) {
+            const extracted = extractToolCallsFromText(content);
+            if (extracted.toolCalls.length > 0) {
+              content = extracted.content;
+              toolCalls = extracted.toolCalls;
+              finishReason = 'tool_calls';
+            }
+          }
+
           if (SHOW_REASONING && inlineReasoning && reasoning) {
             // Inline reasoning format: bake <thinking> tags into content.
             content = `<thinking>\n${reasoning}\n</thinking>\n\n${content}`;
           }
 
           const finalMessage = { ...normalizedChoice.message, content };
+
+          if (toolCalls && toolCalls.length > 0) {
+            finalMessage.tool_calls = toolCalls;
+          } else {
+            delete finalMessage.tool_calls;
+          }
 
           // Same as the streaming path: keep the structured field alongside
           // the inline tags so structured-reasoning clients can render their
@@ -924,6 +1266,7 @@ app.post('/v1/chat/completions', async (req, res) => {
           const finalChoice = {
             ...normalizedChoice,
             index: i,
+            finish_reason: finishReason,
             message: finalMessage
           };
           return finalChoice;
@@ -992,5 +1335,7 @@ app.listen(PORT, () => {
     console.error('[VALIDATION] Startup check failed:', err.message);
   });
 });
+
+
 
  
