@@ -1,6 +1,6 @@
 // server.js — OpenAI-compatible proxy for NVIDIA NIM
 // Express 5 compatible.
-//mr larp himself 
+
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -77,12 +77,10 @@ const FALLBACK_MODELS = [
   'google/gemma-4-31b-it'
 ];
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ─── Reasoning subsystem (merged from reasoning.js) ────────────────────────
+// ─── Reasoning subsystem ────────────────────────────────────────────────────
 // Owns: which chat_template_kwargs/top-level fields each backend model needs
 // to control thinking, and how to pull reasoning text back out of responses
 // that embed it inline vs. as a structured field.
-// ═══════════════════════════════════════════════════════════════════════════
 
 const SHOW_REASONING = process.env.SHOW_REASONING === 'true';
 if (SHOW_REASONING) console.log('[CONFIG] Reasoning display: ENABLED');
@@ -304,7 +302,7 @@ const REASONING_EFFORT_ENUMS = {
   // "low_effort" middle tier between full reasoning and off.
   'nvidia/nemotron-3-super-120b-a12b': ['low'],
   'nvidia/nemotron-3-ultra-550b-a55b': ['low'],
-  // MiniMax-M3's only option: let the model decide per-turn. but it may kinda not work 
+  // MiniMax-M3's only non-binary option: let the model decide per-turn.
   'minimaxai/minimax-m3': ['adaptive']
 };
 
@@ -443,225 +441,164 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ─── Tool calling (Hermes-style <tool_call> handling) ──────────────────────
+// ─── Tool-call recovery subsystem ──────────────────────────────────────────
+// Some backend models intermittently fail to convert their native tool-call
+// output into NIM's structured `tool_calls` field and instead dump the raw
+// Hermes-style tag straight into `content` as plain text:
+//   <tool_call>
+//   {"name": "...", "arguments": {...}}
+//   </tool_call>
 //
-// Why this exists: NIM only runs a server-side tool-call parser (converting
-// raw model output into a structured `tool_calls` field) for a whitelisted
-// subset of models. Everything else on this proxy's model list is NOT on
-// that whitelist. Two failure modes result:
+// This is a CONFIRMED upstream bug, not something wrong with this proxy's
+// request shape:
+//   - vllm-project/vllm#48095 reproduces this exact failure with GLM-5.2
+//     (vLLM's own `glm47` tool-call parser fails and the call is written
+//     unparsed into content), specifically under tool_choice: "required".
+//   - zai-org/GLM-5#15 and two independent OpenCode bug reports show the
+//     same GLM-5/5.2-via-NIM leak, intermittent and worse on long contexts
+//     with many tool calls in a session.
+//   - zed-industries/zed#55884 reproduces the identical failure mode with
+//     nvidia/nemotron-3-super-120b-a12b via integrate.api.nvidia.com ("the
+//     first few tool calls go correctly... later, the tool calling code is
+//     seen in output directly") — so this isn't GLM-specific, it can happen
+//     with any model in MODEL_MAPPING/FALLBACK_MODELS.
 //
-//   1. The model's chat template doesn't render the `tools` field into the
-//      prompt at all, so the model has no idea any functions exist ("it says
-//      it can't access tools and sees none").
-//   2. The model's chat template DOES render `tools` (most modern open-weight
-//      chat templates support this now), the model correctly decides to call
-//      a function, and emits it in the exact format it was fine-tuned on —
-//      which for the vast majority of these models is the Hermes format:
-//        <tool_call>
-//        {"name": "...", "arguments": {...}}
-//        </tool_call>
-//      — but since there's no NIM-side parser for these models, that raw text
-//      just lands in `content` verbatim instead of `tool_calls`.
-//
-// Fix, in two parts:
-//   - injectToolsIntoMessages(): manually write the tool schemas into a
-//     system message ourselves, so every model sees them regardless of
-//     whether its chat template natively supports the `tools` kwarg. This
-//     also means the `tools`/`tool_choice` fields are still forwarded as-is
-//     to NIM on top of this — harmless for models NIM already handles
-//     natively (our injected text is just redundant with what NIM's own
-//     template does), and load-bearing for everything else.
-//   - ToolCallParser / extractToolCallsFromText: mirrors DelimiterParser
-//     above, but for <tool_call> tags instead of <think> tags. Runs AFTER
-//     reasoning extraction, on whatever `content` is left. Only kicks in
-//     when the model didn't already return native structured `tool_calls`
-//     (so it never clobbers a response from a model NIM already parses).
-// ═══════════════════════════════════════════════════════════════════════════
+// Because it's an intermittent upstream parser failure rather than a model
+// that flatly lacks tool-call support, it can't be fixed by routing around a
+// specific model — it has to be caught and repaired wherever it happens.
+// This recovery layer runs unconditionally (streaming and non-streaming) and
+// is a no-op with negligible overhead when the tag never appears.
 
-const TOOL_CALL_OPEN_TAG = '<tool_call>';
-const TOOL_CALL_CLOSE_TAG = '</tool_call>';
-const DEBUG_TOOLCALLS = process.env.DEBUG_TOOLCALLS === 'true';
+const TOOL_CALL_OPEN = '<tool_call>';
+const TOOL_CALL_CLOSE = '</tool_call>';
 
-function buildToolsSystemPrompt(tools, tool_choice) {
-  const toolDefs = tools
-    .filter(t => t && t.type === 'function' && t.function)
-    .map(t => JSON.stringify(t.function))
-    .join('\n');
-
-  let forcedLine = '';
-  if (tool_choice && typeof tool_choice === 'object' && tool_choice.function && tool_choice.function.name) {
-    forcedLine = `\nFor this turn you MUST call the "${tool_choice.function.name}" function.`;
-  } else if (tool_choice === 'required') {
-    forcedLine = '\nFor this turn you MUST call one of the functions above — do not respond in plain text only.';
-  }
-
-  return [
-    'You have access to function tools. When a function call is needed, respond with ONLY a JSON object wrapped in <tool_call></tool_call> tags — no other text in that turn.',
-    '',
-    'Available functions:',
-    '<tools>',
-    toolDefs,
-    '</tools>',
-    '',
-    'Call format (arguments is an object matching the function\'s parameters schema):',
-    '<tool_call>',
-    '{"name": "<function-name>", "arguments": {<argument object>}}',
-    '</tool_call>',
-    '',
-    'Emit one <tool_call> block per function call. Chain multiple blocks back to back if more than one call is needed in the same turn. If no function applies, just answer normally with no <tool_call> tags.' + forcedLine
-  ].join('\n');
+function generateToolCallId() {
+  return `call_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// Merges the tool-definition system prompt into the outgoing messages array.
-// Appends to an existing system message if present, otherwise prepends a new one.
-function injectToolsIntoMessages(messages, tools, tool_choice) {
-  const toolPrompt = buildToolsSystemPrompt(tools, tool_choice);
-  const msgs = Array.isArray(messages) ? [...messages] : [];
-  const systemIdx = msgs.findIndex(m => m.role === 'system');
-
-  if (systemIdx !== -1) {
-    msgs[systemIdx] = {
-      ...msgs[systemIdx],
-      content: `${msgs[systemIdx].content}\n\n${toolPrompt}`
-    };
-  } else {
-    msgs.unshift({ role: 'system', content: toolPrompt });
+// Non-streaming: extracts every <tool_call>{...}</tool_call> block from a
+// complete content string. Returns { content, toolCalls } — content has the
+// recovered blocks stripped out, toolCalls is an array of OpenAI-shaped
+// tool_calls objects (possibly empty).
+//
+// Malformed JSON inside a tag (also a documented GLM-5.2 symptom — truncated
+// args, missing closing brace, per the zai-org/GLM-5#15 reports) is left in
+// place rather than silently dropped, so worst case the raw tag still reaches
+// the client instead of vanishing without a trace.
+function extractLeakedToolCalls(content) {
+  if (!content || !content.includes(TOOL_CALL_OPEN)) {
+    return { content, toolCalls: [] };
   }
-  return msgs;
-}
 
-// Builds one OpenAI-shaped tool_calls entry from the raw JSON text found
-// inside a <tool_call>...</tool_call> block. Throws on malformed JSON or a
-// missing "name" field so callers can catch-and-skip rather than emit junk.
-function buildToolCallEntry(rawJson, index) {
-  const parsed = JSON.parse(rawJson.trim());
-  if (!parsed || typeof parsed.name !== 'string') {
-    throw new Error('tool_call JSON missing "name" field');
-  }
-  return {
-    index,
-    id: `call_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
-    type: 'function',
-    function: {
-      name: parsed.name,
-      arguments: JSON.stringify(parsed.arguments ?? {})
-    }
-  };
-}
-
-// Non-streaming: the full text is available up front, so a simple global
-// regex pass is enough — no need for the stateful buffering the streaming
-// path requires below.
-function extractToolCallsFromText(content) {
-  if (!content) return { content, toolCalls: [] };
-  const regex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
   const toolCalls = [];
-  let match;
-  let index = 0;
+  let result = '';
+  let cursor = 0;
 
-  while ((match = regex.exec(content)) !== null) {
-    try {
-      toolCalls.push(buildToolCallEntry(match[1], index));
-      index++;
-    } catch (err) {
-      console.warn('[TOOLCALL] Failed to parse tool_call JSON:', match[1].slice(0, 200), err.message);
+  while (true) {
+    const openIdx = content.indexOf(TOOL_CALL_OPEN, cursor);
+    if (openIdx === -1) {
+      result += content.slice(cursor);
+      break;
     }
+    const closeIdx = content.indexOf(TOOL_CALL_CLOSE, openIdx);
+    if (closeIdx === -1) {
+      // Unterminated tag (e.g. truncated at max_tokens) — leave it as-is
+      // rather than guess at a repair.
+      result += content.slice(cursor);
+      break;
+    }
+
+    result += content.slice(cursor, openIdx);
+    const inner = content.slice(openIdx + TOOL_CALL_OPEN.length, closeIdx).trim();
+
+    try {
+      const parsed = JSON.parse(inner);
+      if (parsed && typeof parsed.name === 'string') {
+        toolCalls.push({
+          id: generateToolCallId(),
+          type: 'function',
+          function: {
+            name: parsed.name,
+            arguments: JSON.stringify(parsed.arguments ?? {})
+          }
+        });
+      } else {
+        // Well-formed JSON but not the shape we expect — keep it visible.
+        result += content.slice(openIdx, closeIdx + TOOL_CALL_CLOSE.length);
+      }
+    } catch {
+      console.warn('[TOOL_CALL_RECOVERY] Malformed JSON inside <tool_call> tag, leaving raw:', inner.slice(0, 200));
+      result += content.slice(openIdx, closeIdx + TOOL_CALL_CLOSE.length);
+    }
+
+    cursor = closeIdx + TOOL_CALL_CLOSE.length;
   }
 
-  if (toolCalls.length === 0) return { content, toolCalls };
-
-  const cleaned = content.replace(regex, '').trim();
-  if (DEBUG_TOOLCALLS) console.log(`[TOOLCALL] Extracted ${toolCalls.length} call(s) from non-stream response`);
-  return { content: cleaned, toolCalls };
+  return { content: result, toolCalls };
 }
 
-// Streaming: same delimiter-scanning shape as DelimiterParser above, but the
-// payload inside the tags has to be complete, valid JSON before it's usable.
-// Unlike reasoning text (which can just stream straight through), the whole
-// block gets buffered and released as a single tool_calls delta once the
-// closing tag arrives, rather than token-by-token. This is still valid
-// OpenAI-shaped streaming — clients accumulate delta.tool_calls by index,
-// they don't require single-token increments — it's just delivered as one
-// burst instead of a trickle.
-class ToolCallParser {
+// Streaming: stateful, cross-chunk recovery for the same leak. Built on top
+// of DelimiterParser — the same battle-tested cross-chunk tag-splitting
+// logic already used above for <think>/<mm:think> — rather than a second
+// bespoke parser, since a <tool_call> tag can just as easily be split across
+// SSE chunk boundaries as a <think> tag can.
+class ToolCallStreamRecovery {
   constructor() {
-    this.buffer = '';
-    this.inToolCall = false;
+    this.parser = new DelimiterParser(TOOL_CALL_OPEN, TOOL_CALL_CLOSE);
+    this.pending = '';
     this.toolCallIndex = 0;
-    this.foundAny = false;
   }
 
-  _partialSuffixLen(target) {
-    const maxLen = Math.min(this.buffer.length, target.length - 1);
-    for (let i = maxLen; i > 0; i--) {
-      if (target.startsWith(this.buffer.slice(-i))) return i;
-    }
-    return 0;
-  }
+  // text: already-normalized content for this chunk (post reasoning-split).
+  // Returns { content, toolCallDelta } — content is safe to forward to the
+  // client as-is, toolCallDelta is a ready OpenAI tool_calls delta or null.
+  process(text) {
+    const { content, reasoning } = this.parser.processChunk(text);
+    let outContent = content;
 
-  // NOTE: this deliberately does NOT reuse DelimiterParser's "emit before-text
-  // immediately, hold back only a partial-tag suffix" pattern. That pattern
-  // is fine for reasoning text, which just streams straight through as loose
-  // text either way. It's wrong here: while inToolCall, the text in between
-  // the tags is not done accumulating until the closing tag shows up — it
-  // has to be handed to JSON.parse as one intact string, so nothing inside
-  // an open <tool_call> block gets touched or trimmed until it closes.
-  processChunk(chunk) {
-    this.buffer += chunk;
-    let content = '';
-    const toolCalls = [];
+    if (reasoning) this.pending += reasoning;
 
-    while (true) {
-      if (!this.inToolCall) {
-        const openIdx = this.buffer.indexOf(TOOL_CALL_OPEN_TAG);
-        if (openIdx !== -1) {
-          content += this.buffer.slice(0, openIdx);
-          this.buffer = this.buffer.slice(openIdx + TOOL_CALL_OPEN_TAG.length);
-          this.inToolCall = true;
-          continue;
+    // pending non-empty + parser no longer inside the tag == a close tag was
+    // just resolved in this call (pending is always cleared immediately
+    // below, so this state can only be freshly true).
+    if (this.pending && !this.parser.inThinking) {
+      const inner = this.pending.trim();
+      this.pending = '';
+      try {
+        const parsed = JSON.parse(inner);
+        if (parsed && typeof parsed.name === 'string') {
+          return {
+            content: outContent,
+            toolCallDelta: {
+              index: this.toolCallIndex++,
+              id: generateToolCallId(),
+              type: 'function',
+              function: { name: parsed.name, arguments: JSON.stringify(parsed.arguments ?? {}) }
+            }
+          };
         }
-        // No open tag yet — hold back a possible partial "<tool_c" style
-        // suffix so it doesn't leak into visible content, emit the rest.
-        const partial = this._partialSuffixLen(TOOL_CALL_OPEN_TAG);
-        content += this.buffer.slice(0, this.buffer.length - partial);
-        this.buffer = this.buffer.slice(this.buffer.length - partial);
-        break;
-      } else {
-        const closeIdx = this.buffer.indexOf(TOOL_CALL_CLOSE_TAG);
-        if (closeIdx !== -1) {
-          const jsonText = this.buffer.slice(0, closeIdx);
-          try {
-            toolCalls.push(buildToolCallEntry(jsonText, this.toolCallIndex++));
-            this.foundAny = true;
-            if (DEBUG_TOOLCALLS) console.log('[TOOLCALL] Parsed streamed tool call:', jsonText.slice(0, 200));
-          } catch (err) {
-            console.warn('[TOOLCALL] Failed to parse streamed tool_call JSON:', jsonText.slice(0, 200), err.message);
-          }
-          this.buffer = this.buffer.slice(closeIdx + TOOL_CALL_CLOSE_TAG.length);
-          this.inToolCall = false;
-          continue;
-        }
-        // Still inside the block with no closing tag yet — keep the whole
-        // thing sitting in this.buffer untouched, nothing to emit this round.
-        break;
+        outContent = TOOL_CALL_OPEN + inner + TOOL_CALL_CLOSE + outContent;
+      } catch {
+        console.warn('[TOOL_CALL_RECOVERY] Malformed JSON inside streamed <tool_call> tag, leaving raw:', inner.slice(0, 200));
+        outContent = TOOL_CALL_OPEN + inner + TOOL_CALL_CLOSE + outContent;
       }
     }
 
-    return { content, toolCalls };
+    return { content: outContent, toolCallDelta: null };
   }
 
+  // Stream ended while still mid-tag (cut off before the closing tag
+  // arrived, e.g. hit max_tokens) — return the raw partial buffer as text
+  // instead of silently dropping it.
   flush() {
-    let content = '';
-    if (this.buffer) {
-      if (this.inToolCall) {
-        console.warn('[TOOLCALL] Stream ended mid tool_call block, discarding incomplete JSON:', this.buffer.slice(0, 200));
-      } else {
-        content = this.buffer;
-      }
-      this.buffer = '';
+    const flushed = this.parser.flush();
+    let leftover = flushed.content || '';
+    const tailInner = this.pending + (flushed.reasoning || '');
+    if (tailInner) {
+      leftover += TOOL_CALL_OPEN + tailInner;
     }
-    return { content };
+    this.pending = '';
+    return leftover;
   }
 }
 
@@ -902,29 +839,14 @@ app.post('/v1/chat/completions', async (req, res) => {
     // twice before actually diversifying.
     const modelChain = [...new Set([primaryModel, ...FALLBACK_MODELS])];
 
-    // hasTools: raw "did the client define any tools" flag — used for the
-    // nemotron force_nonempty_content hint and for whether we forward
-    // tools/tool_choice upstream at all.
-    // toolCallsEnabled: whether OUR injection + parsing layer should run.
-    // Stays off when tool_choice is explicitly "none" — the client is saying
-    // don't call anything this turn, so don't push tool instructions into
-    // the prompt or go hunting for <tool_call> tags in the reply.
-    const hasTools = !!(tools && tools.length > 0);
-    const toolCallsEnabled = hasTools && tool_choice !== 'none';
-
-    const effectiveMessages = toolCallsEnabled
-      ? injectToolsIntoMessages(messages, tools, tool_choice)
-      : messages;
-
     const baseRequest = {
-      messages: effectiveMessages,
+      messages,
       temperature: temperature ?? 0.7,
       max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
       stream: stream || false,
-      // Forward tool-calling fields as-is too. Harmless for the handful of
-      // NIM-whitelisted models that natively support this (redundant with
-      // our own injected system prompt, but doesn't break anything); load
-      // bearing for nothing since our injection covers the general case.
+      // Forward tool-calling fields as-is. Without this, clients using
+      // function/tool calling silently get a plain chat completion back —
+      // NIM never sees the tool definitions, so it never returns tool_calls.
       ...(tools && { tools }),
       ...(tool_choice && { tool_choice })
     };
@@ -934,7 +856,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       modelChain,
       ENABLE_THINKING_MODE,
       req.body.reasoning_effort,
-      hasTools
+      !!tools
     );
 
     upstreamStream = response.data;
@@ -954,7 +876,10 @@ app.post('/v1/chat/completions', async (req, res) => {
       let doneSent = false;
       let cleanedUp = false;
       const normalizer = new StreamNormalizer(usedModel);
-      const toolCallParser = toolCallsEnabled ? new ToolCallParser() : null;
+      // See "Tool-call recovery subsystem" above — catches models (GLM-5.2,
+      // nemotron-3-super confirmed) that leak tool calls into content as a
+      // raw <tool_call> tag instead of NIM's structured tool_calls field.
+      const toolRecovery = new ToolCallStreamRecovery();
 
       const cleanup = () => {
         if (cleanedUp) return;
@@ -987,20 +912,6 @@ app.post('/v1/chat/completions', async (req, res) => {
 
           if (delta) {
             const normalizedDelta = normalizer.processDelta(delta);
-            let cleanContent = normalizedDelta.content || '';
-
-            // Only run our <tool_call> text parser when the upstream chunk
-            // didn't already hand back native structured tool_calls — if it
-            // did (one of NIM's whitelisted models), trust it as-is and
-            // don't touch it.
-            const hasNativeToolCalls = !!delta.tool_calls;
-            let extractedToolCalls = [];
-            if (toolCallParser && !hasNativeToolCalls) {
-              const parsed = toolCallParser.processChunk(cleanContent);
-              cleanContent = parsed.content;
-              extractedToolCalls = parsed.toolCalls;
-            }
-
             let clientContent = '';
 
             if (SHOW_REASONING && inlineReasoning) {
@@ -1013,24 +924,35 @@ app.post('/v1/chat/completions', async (req, res) => {
                 clientContent += normalizedDelta.reasoning;
               }
 
-              if (cleanContent && reasoningOpen) {
-                clientContent += `\n</thinking>\n\n${cleanContent}`;
+              if (normalizedDelta.content && reasoningOpen) {
+                clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
                 reasoningOpen = false;
-              } else if (cleanContent) {
-                clientContent += cleanContent;
+              } else if (normalizedDelta.content) {
+                clientContent += normalizedDelta.content;
               }
             } else {
               // Default behavior: clean content, no inline tags
-              clientContent = cleanContent;
+              clientContent = normalizedDelta.content || '';
+            }
+
+            // Recover tool calls the backend leaked into content as a raw
+            // <tool_call> tag instead of a structured field (confirmed
+            // upstream bug — see subsystem notes above). Must run on the
+            // final clientContent (post reasoning-split, post inline-tag
+            // formatting) since that's the actual text stream being built.
+            const { content: recoveredContent, toolCallDelta } = toolRecovery.process(clientContent);
+            clientContent = recoveredContent;
+            if (toolCallDelta) {
+              delta.tool_calls = [toolCallDelta];
+              // Force the signal even if upstream's own finish_reason on this
+              // chunk was null/'stop' — a recovered tool call means the
+              // model's actual intent was a tool_calls turn, and
+              // OpenAI-compatible clients key off this field to decide
+              // whether to execute a tool vs. treat the turn as finished prose.
+              if (data.choices[0]) data.choices[0].finish_reason = 'tool_calls';
             }
 
             delta.content = clientContent;
-
-            if (extractedToolCalls.length > 0) {
-              delta.tool_calls = extractedToolCalls;
-            }
-            // else: leave delta.tool_calls exactly as upstream sent it
-            // (untouched if native, absent if there was never any).
 
             // Keep a structured reasoning field alongside inline tags in
             // content. Some clients parse the inline <thinking> tags;
@@ -1043,17 +965,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             } else {
               delete delta.reasoning;
               delete delta.reasoning_content;
-            }
-          }
-
-          // Once we've extracted at least one tool call from this response,
-          // the eventual finish_reason chunk (usually "stop") needs to read
-          // "tool_calls" instead, per the OpenAI spec — otherwise clients
-          // that gate tool execution on finish_reason never fire.
-          if (toolCallParser && toolCallParser.foundAny) {
-            const choice = data.choices?.[0];
-            if (choice && choice.finish_reason) {
-              choice.finish_reason = 'tool_calls';
             }
           }
 
@@ -1103,64 +1014,53 @@ app.post('/v1/chat/completions', async (req, res) => {
           }
         }
 
-        const flushedNormalizer = normalizer.flush();
-        let flushedContent = flushedNormalizer.content || '';
-        let flushedToolCalls = [];
+        const flushedDelta = normalizer.flush();
 
-        if (toolCallParser) {
-          // Run any trailing normalizer-flushed text through the tool-call
-          // parser too (catches a <tool_call> block that completes exactly
-          // at stream end), then flush the tool-call parser itself in case
-          // the model got cut off mid-block (e.g. hit max_tokens inside the
-          // JSON) — flush() just discards that incomplete fragment rather
-          // than emitting broken JSON as a tool call.
-          const parsed = toolCallParser.processChunk(flushedContent);
-          flushedContent = parsed.content;
-          flushedToolCalls = parsed.toolCalls;
-          const finalFlush = toolCallParser.flush();
-          flushedContent += finalFlush.content;
+        // Stream ended while still mid <tool_call> tag (e.g. cut off by
+        // max_tokens before the closing tag arrived). Surface the raw
+        // partial tag as text rather than silently dropping it.
+        const toolRecoveryLeftover = toolRecovery.flush();
+        if (toolRecoveryLeftover) {
+          console.warn('[TOOL_CALL_RECOVERY] Stream ended mid <tool_call> tag; flushing raw text instead of dropping it.');
+          flushedDelta.content = (flushedDelta.content || '') + toolRecoveryLeftover;
         }
 
-        if (flushedContent || flushedNormalizer.reasoning || flushedToolCalls.length > 0) {
+        if (flushedDelta.content || flushedDelta.reasoning) {
           let clientContent = '';
 
           if (SHOW_REASONING && inlineReasoning) {
             // Inline reasoning format: bake <thinking> tags into content.
-            if (flushedNormalizer.reasoning && !reasoningOpen) {
-              clientContent += `<thinking>\n${flushedNormalizer.reasoning}`;
+            if (flushedDelta.reasoning && !reasoningOpen) {
+              clientContent += `<thinking>\n${flushedDelta.reasoning}`;
               reasoningOpen = true;
-            } else if (flushedNormalizer.reasoning) {
-              clientContent += flushedNormalizer.reasoning;
+            } else if (flushedDelta.reasoning) {
+              clientContent += flushedDelta.reasoning;
             }
 
-            if (flushedContent && reasoningOpen) {
-              clientContent += `\n</thinking>\n\n${flushedContent}`;
+            if (flushedDelta.content && reasoningOpen) {
+              clientContent += `\n</thinking>\n\n${flushedDelta.content}`;
               reasoningOpen = false;
-            } else if (flushedContent) {
-              clientContent += flushedContent;
+            } else if (flushedDelta.content) {
+              clientContent += flushedDelta.content;
             }
           } else {
             // Default behavior: clean content, no inline tags
-            clientContent = flushedContent;
+            clientContent = flushedDelta.content || '';
           }
 
           const finalChunk = { choices: [{ delta: {} }] };
           if (clientContent) finalChunk.choices[0].delta.content = clientContent;
-          if (flushedToolCalls.length > 0) {
-            finalChunk.choices[0].delta.tool_calls = flushedToolCalls;
-            finalChunk.choices[0].finish_reason = 'tool_calls';
-          }
 
           // Mirror the per-chunk handling above: leftover reasoning text
           // must also reach structured-format clients, not just get folded
           // into inline tags. Previously this was dropped entirely whenever
           // SHOW_REASONING was on but inlineReasoning was off.
-          if (SHOW_REASONING && !inlineReasoning && flushedNormalizer.reasoning) {
-            finalChunk.choices[0].delta.reasoning = flushedNormalizer.reasoning;
-            finalChunk.choices[0].delta.reasoning_content = flushedNormalizer.reasoning;
+          if (SHOW_REASONING && !inlineReasoning && flushedDelta.reasoning) {
+            finalChunk.choices[0].delta.reasoning = flushedDelta.reasoning;
+            finalChunk.choices[0].delta.reasoning_content = flushedDelta.reasoning;
           }
 
-          if (Object.keys(finalChunk.choices[0].delta).length > 0 || finalChunk.choices[0].finish_reason) {
+          if (Object.keys(finalChunk.choices[0].delta).length > 0) {
             safeWrite(res, `data: ${JSON.stringify(finalChunk)}\n\n`);
           }
         }
@@ -1224,20 +1124,11 @@ app.post('/v1/chat/completions', async (req, res) => {
           let content = normalizedChoice.message?.content || '';
           const reasoning = normalizedChoice.message?.reasoning || '';
 
-          let toolCalls = normalizedChoice.message?.tool_calls;
-          let finishReason = normalizedChoice.finish_reason;
-
-          // Same rule as streaming: only go hunting for <tool_call> text if
-          // the upstream response didn't already return native structured
-          // tool_calls.
-          if (toolCallsEnabled && !toolCalls) {
-            const extracted = extractToolCallsFromText(content);
-            if (extracted.toolCalls.length > 0) {
-              content = extracted.content;
-              toolCalls = extracted.toolCalls;
-              finishReason = 'tool_calls';
-            }
-          }
+          // Recover tool calls the backend leaked into content as a raw
+          // <tool_call> tag instead of NIM's structured tool_calls field
+          // (confirmed upstream bug — see subsystem notes above).
+          const { content: cleanedContent, toolCalls: recoveredToolCalls } = extractLeakedToolCalls(content);
+          content = cleanedContent;
 
           if (SHOW_REASONING && inlineReasoning && reasoning) {
             // Inline reasoning format: bake <thinking> tags into content.
@@ -1246,10 +1137,18 @@ app.post('/v1/chat/completions', async (req, res) => {
 
           const finalMessage = { ...normalizedChoice.message, content };
 
-          if (toolCalls && toolCalls.length > 0) {
-            finalMessage.tool_calls = toolCalls;
-          } else {
-            delete finalMessage.tool_calls;
+          if (recoveredToolCalls.length > 0) {
+            finalMessage.tool_calls = [
+              ...(normalizedChoice.message?.tool_calls || []),
+              ...recoveredToolCalls
+            ];
+            // A present-but-whitespace-only content string alongside
+            // tool_calls trips up some client-side agent loops that expect
+            // null content on a tool-call turn (mirrors real OpenAI
+            // tool-call responses, which always send content: null).
+            if (!finalMessage.content || !finalMessage.content.trim()) {
+              finalMessage.content = null;
+            }
           }
 
           // Same as the streaming path: keep the structured field alongside
@@ -1266,8 +1165,8 @@ app.post('/v1/chat/completions', async (req, res) => {
           const finalChoice = {
             ...normalizedChoice,
             index: i,
-            finish_reason: finishReason,
-            message: finalMessage
+            message: finalMessage,
+            ...(recoveredToolCalls.length > 0 && { finish_reason: 'tool_calls' })
           };
           return finalChoice;
         }),
@@ -1335,7 +1234,3 @@ app.listen(PORT, () => {
     console.error('[VALIDATION] Startup check failed:', err.message);
   });
 });
-
-
-
- 
