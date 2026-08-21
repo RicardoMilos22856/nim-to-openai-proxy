@@ -285,7 +285,7 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
       if (effort && ['low', 'medium', 'high'].includes(effort)) {
         return { reasoning_effort: effort };
       }
-      if (enableThinking) return { reasoning_effort: 'high' };
+      if (enableThinking) return { reasoning_effort: 'medium' };
       return {};
     }
 
