@@ -97,7 +97,10 @@ const MODEL_MAPPING = {
   'step-3.7-flash': 'stepfun-ai/step-3.7-flash'
 };
 
-const FALLBACK_MODELS = [];
+const FALLBACK_MODELS = [
+  'mistralai/mistral-nemotron',
+  'openai/gpt-oss-120b'
+];
 
 // ─── Reasoning Subsystem ─────────────────────────────────────────────────────
 // Pure, stateful string parser for extracting reasoning blocks across chunks.
