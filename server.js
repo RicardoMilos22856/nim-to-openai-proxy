@@ -549,6 +549,9 @@ app.post('/v1/chat/completions', async (req, res) => {
     );
     upstreamStream = response.data;
     console.log('[PROXY] Model used:', usedModel);
+    console.log('[DEBUG] stream =', stream);
+    console.log('[DEBUG] typeof response.data =', typeof response.data);
+    console.log('[DEBUG] response.data keys =', response.data && Object.keys(response.data));
 
 // === DEBUG START ===
 if (stream) {
