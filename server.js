@@ -550,6 +550,15 @@ app.post('/v1/chat/completions', async (req, res) => {
     upstreamStream = response.data;
     console.log('[PROXY] Model used:', usedModel);
 
+// === DEBUG START ===
+if (stream) {
+  console.log('[DEBUG] Streaming mode');
+} else {
+  console.log('[DEBUG] Non-stream response keys:', Object.keys(response.data || {}));
+  console.log('[DEBUG] Choices:', JSON.stringify(response.data?.choices?.[0] || {}, null, 2).slice(0, 800));
+}
+// === DEBUG END ===
+
     // Determine if the client wants legacy inline <thinking> tags in the content stream
     const inlineReasoning = req.headers['x-reasoning-format'] === 'inline';
 
