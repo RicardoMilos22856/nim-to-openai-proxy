@@ -315,7 +315,6 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     }
 
     case 'stepfun-ai/step-3.7-flash': {
-      if (enableThinking) return {};
       return { chat_template_kwargs: { thinking: false } };
     }
 
