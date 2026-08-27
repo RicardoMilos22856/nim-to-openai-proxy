@@ -40,13 +40,11 @@ const NIM_API_KEY = process.env.NIM_API_KEY;
 const CLIENT_AUTH_KEY = process.env.CLIENT_AUTH_KEY;
 
 const SHOW_REASONING = process.env.SHOW_REASONING === 'true';
-const ENABLE_THINKING_MODE = process.env.ENABLE_THINKING_MODE === 'true';
+const ENABLE_THINKING_MODE = false; // Отключили мышление тут, без повторных объявлений!
 const SKIP_VALIDATION = process.env.SKIP_VALIDATION === 'true';
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
 const MAX_TOKENS_LIMIT = 131072;
-// Отключаем reasoning для RP (чтобы не было "мышления" и текст оставался кинематографичным)
-const ENABLE_THINKING_MODE = false; // можно поменять на true, если нужно
 const REQUEST_TIMEOUT_MS = 180000;
 const VALIDATION_TIMEOUT_MS = 15000;
 const MAX_BUFFER_SIZE = 1024 * 1024; // 1MB
