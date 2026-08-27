@@ -73,15 +73,22 @@ const MODEL_MAPPING = {
   'gpt-4': 'nvidia/nemotron-3-ultra-550b-a55b',
   'gpt-3.5': 'qwen/qwen3.5-397b-a17b',
   'gpt-4-turbo': 'moonshotai/kimi-k2.6',
-  'gpt-4o': 'deepseek-ai/deepseek-v4-flash-0731',
+  
+  // === НОВОЕ ===
+  'gpt-4o': 'deepseek-ai/deepseek-v4-pro-0813',
+  'gpt-4-pro': 'deepseek-ai/deepseek-v4-pro-0813',
+  'deepseek-v4-pro': 'deepseek-ai/deepseek-v4-pro-0813',
+  'deepseek-v4-pro-0813': 'deepseek-ai/deepseek-v4-pro-0813',
+  'gpt-4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
+  'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
+  // =================
+  
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'gemini-pro': 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
   'gemini-turbo': 'meta/llama-3.3-70b-instruct',
   'gemini-turbo?': 'abacusai/dracarys-llama-3.1-70b-instruct',
   'gpt-3.5o': 'nvidia/nemotron-mini-4b-instruct',
-  'gpt-4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
-  'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'glm-5.2': 'z-ai/glm-5.2',
   'mistral': 'mistralai/mistral-large-3-675b-instruct-2512',
   'mistral-turbo': 'mistralai/mistral-medium-3.5-128b',
@@ -270,13 +277,16 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
       return { chat_template_kwargs: { enable_thinking: false } };
     }
 
-    case 'deepseek-ai/deepseek-v4-pro':
-    case 'deepseek-ai/deepseek-v4-flash': {
-      if (!enableThinking) return {};
-      const payload = { chat_template_kwargs: { thinking: true } };
-      if (effort) payload.chat_template_kwargs.reasoning_effort = effort;
-      return payload;
-    }
+    default:
+      // Обработка DeepSeek V4 Pro (0813) и Flash — единый блок
+      if (model.includes('deepseek-ai/deepseek-v4-pro') || model.includes('deepseek-ai/deepseek-v4-flash')) {
+        if (!enableThinking) return {};
+        const payload = { chat_template_kwargs: { thinking: true } };
+        if (effort) payload.chat_template_kwargs.reasoning_effort = effort;
+        return payload;
+      }
+      // Default reasoning models (Kimi, MiniMax, etc.) or non-reasoning models
+      return {};
 
     case 'openai/gpt-oss-120b':
     case 'openai/gpt-oss-20b': {
@@ -520,6 +530,8 @@ app.get('/v1/models', (req, res) => {
 app.post('/v1/chat/completions', async (req, res) => {
   let streamEndedCleanly = false;
   let upstreamStream = null;
+  // ФИКС: Объявляем переменную, чтобы сервер не падал
+  const inlineReasoning = req.headers['x-reasoning-format'] === 'inline';
 
   try {
     const {
