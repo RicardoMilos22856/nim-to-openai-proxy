@@ -44,7 +44,9 @@ const ENABLE_THINKING_MODE = process.env.ENABLE_THINKING_MODE === 'true';
 const SKIP_VALIDATION = process.env.SKIP_VALIDATION === 'true';
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 
-const MAX_TOKENS_LIMIT = 65536;
+const MAX_TOKENS_LIMIT = 131072;
+// Отключаем reasoning для RP (чтобы не было "мышления" и текст оставался кинематографичным)
+const ENABLE_THINKING_MODE = false; // можно поменять на true, если нужно
 const REQUEST_TIMEOUT_MS = 180000;
 const VALIDATION_TIMEOUT_MS = 15000;
 const MAX_BUFFER_SIZE = 1024 * 1024; // 1MB
@@ -277,17 +279,6 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
       return { chat_template_kwargs: { enable_thinking: false } };
     }
 
-    default:
-      // Обработка DeepSeek V4 Pro (0813) и Flash — единый блок
-      if (model.includes('deepseek-ai/deepseek-v4-pro') || model.includes('deepseek-ai/deepseek-v4-flash')) {
-        if (!enableThinking) return {};
-        const payload = { chat_template_kwargs: { thinking: true } };
-        if (effort) payload.chat_template_kwargs.reasoning_effort = effort;
-        return payload;
-      }
-      // Default reasoning models (Kimi, MiniMax, etc.) or non-reasoning models
-      return {};
-
     case 'openai/gpt-oss-120b':
     case 'openai/gpt-oss-20b': {
       if (effort && ['low', 'medium', 'high'].includes(effort)) {
@@ -329,10 +320,18 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     }
 
     default:
+      // Перехватываем DeepSeek V4 Pro (0813) и Flash в едином дефолтном блоке
+      if (model.includes('deepseek-ai/deepseek-v4-pro') || model.includes('deepseek-ai/deepseek-v4-flash')) {
+        if (!enableThinking) return {};
+        const payload = { chat_template_kwargs: { thinking: true } };
+        if (effort) payload.chat_template_kwargs.reasoning_effort = effort;
+        return payload;
+      }
       // Default reasoning models (Kimi, MiniMax, etc.) or non-reasoning models
       return {};
   }
 }
+
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
 
