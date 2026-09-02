@@ -81,6 +81,7 @@ const MODEL_MAPPING = {
   'deepseek-v4-pro-0813': 'deepseek-ai/deepseek-v4-pro-0813',
   'gpt-4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
+  'llama-3.2-90b-vision-instruct': 'meta/llama-3.2-90b-vision-instruct',
   // =================
   
   'claude-3-opus': 'openai/gpt-oss-120b',
