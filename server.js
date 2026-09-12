@@ -69,12 +69,6 @@ validateConfig();
 // ─── Model Mapping ─────────────────────────────────────────────────────────
 
 const MODEL_MAPPING = {
-  'gpt-3.5-turbo': 'nvidia/nemotron-3-super-120b-a12b',
-  'gpt-4': 'nvidia/nemotron-3-ultra-550b-a55b',
-  'gpt-3.5': 'qwen/qwen3.5-397b-a17b',
-  'gpt-4-turbo': 'moonshotai/kimi-k2.6',
-  
-  // === НОВОЕ ===
   'gpt-4o': 'deepseek-ai/deepseek-v4-pro-0813',
   'gpt-4-pro': 'deepseek-ai/deepseek-v4-pro-0813',
   'deepseek-v4-pro': 'deepseek-ai/deepseek-v4-pro-0813',
@@ -82,29 +76,13 @@ const MODEL_MAPPING = {
   'gpt-4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'llama-3.2-90b-vision-instruct': 'meta/llama-3.2-90b-vision-instruct',
-  // =================
-  
+  'kimi-k3': 'moonshotai/kimi-k3',          // ← НОВОЕ
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
-  'gemini-pro': 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
-  'gemini-turbo': 'meta/llama-3.3-70b-instruct',
-  'gemini-turbo?': 'abacusai/dracarys-llama-3.1-70b-instruct',
-  'gpt-3.5o': 'nvidia/nemotron-mini-4b-instruct',
-  'glm-5.2': 'z-ai/glm-5.2',
-  'mistral': 'mistralai/mistral-large-3-675b-instruct-2512',
-  'mistral-turbo': 'mistralai/mistral-medium-3.5-128b',
-  'mistral-pro': 'mistralai/mistral-small-4-119b-2603',
-  'mistral-nemo': 'mistralai/mistral-nemotron',
-  'mistral-fast': 'mistralai/ministral-14b-instruct-2512',
-  'google-light': 'google/gemma-4-31b-it',
-  'google-lightest': 'google/gemma-2-2b-it',
-  'google-lighter': 'google/gemma-3n-e4b-it',
-  'm2.7': 'minimaxai/minimax-m2.7',
   'm3': 'minimaxai/minimax-m3',
-  'step-3.5-flash': 'stepfun-ai/step-3.5-flash',
-  'step-3.7-flash': 'stepfun-ai/step-3.7-flash'
+  'google-light': 'google/gemma-4-31b-it',
+  'mistral-nemo': 'mistralai/mistral-nemotron'
 };
-
 const FALLBACK_MODELS = [
   'mistralai/mistral-nemotron',
   'openai/gpt-oss-120b'
