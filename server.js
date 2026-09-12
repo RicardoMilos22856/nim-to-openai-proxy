@@ -327,6 +327,48 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
   }
 }
 
+async function callWithFallback(baseRequest, models, enableThinking, clientReasoningEffort, hasTools) {
+  let lastError = null;
+
+  for (const model of models) {
+    try {
+      const reasoningPayload = getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools);
+
+      // Только если стрим — ставим Accept, иначе не сломаем обычные JSON-запросы
+      const acceptHeader = baseRequest.stream ? 'text/event-stream' : 'application/json';
+
+      const res = await axios.post(
+        `${NIM_API_BASE}/chat/completions`,
+        { ...baseRequest, model, ...reasoningPayload },
+        {
+          headers: {
+            Authorization: `Bearer ${NIM_API_KEY}`,
+            'Content-Type': 'application/json',
+            'Connection': 'keep-alive',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+            'Accept': acceptHeader
+          },
+          httpAgent,
+          httpsAgent,
+          responseType: baseRequest.stream ? 'stream' : 'json',
+          timeout: REQUEST_TIMEOUT_MS
+        }
+      );
+
+      return { response: res, model };
+
+    } catch (err) {
+      lastError = err;
+      console.warn(
+        `[FALLBACK] Model failed: ${model}`,
+        err.response?.status,
+        err.response?.data?.error?.message || err.message
+      );
+    }
+  }
+
+  throw lastError || new Error('All models failed');
+}
 // ─── Middleware ─────────────────────────────────────────────────────────────
 
 app.use(cors());
@@ -381,47 +423,74 @@ app.use((req, res, next) => {
 
 // ─── Validation ─────────────────────────────────────────────────────────────
 
-async function callWithFallback(baseRequest, models, enableThinking, clientReasoningEffort, hasTools) {
-  let lastError = null;
-
-  for (const model of models) {
-    try {
-      const reasoningPayload = getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools);
-
-      // Только если стрим — ставим Accept, иначе не сломаем обычные JSON-запросы
-      const acceptHeader = baseRequest.stream ? 'text/event-stream' : 'application/json';
-
-      const res = await axios.post(
-        `${NIM_API_BASE}/chat/completions`,
-        { ...baseRequest, model, ...reasoningPayload },
-        {
-          headers: {
-            Authorization: `Bearer ${NIM_API_KEY}`,
-            'Content-Type': 'application/json',
-            'Connection': 'keep-alive',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-            'Accept': acceptHeader
-          },
-          httpAgent,
-          httpsAgent,
-          responseType: baseRequest.stream ? 'stream' : 'json',
-          timeout: REQUEST_TIMEOUT_MS
-        }
-      );
-
-      return { response: res, model };
-
-    } catch (err) {
-      lastError = err;
-      console.warn(
-        `[FALLBACK] Model failed: ${model}`,
-        err.response?.status,
-        err.response?.data?.error?.message || err.message
-      );
-    }
+async function validateModels() {
+  if (SKIP_VALIDATION) {
+    console.log('[VALIDATION] Skipped (SKIP_VALIDATION=true)');
+    return;
   }
 
-  throw lastError || new Error('All models failed');
+  console.log('[VALIDATION] Checking model availability via /v1/models...');
+
+  try {
+    const response = await axios.get(`${NIM_API_BASE}/models`, {
+      headers: {
+        Authorization: `Bearer ${NIM_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: VALIDATION_TIMEOUT_MS
+    });
+
+    const availableModels = new Set(
+      (response.data.data || []).map(m => m.id)
+    );
+
+    const invalid = [];
+
+    for (const [alias, nimId] of Object.entries(MODEL_MAPPING)) {
+      if (availableModels.has(nimId)) {
+        console.log(`[VALIDATION] ✓ ${alias} → ${nimId}`);
+      } else {
+        console.warn(`[VALIDATION] ✗ ${alias} → ${nimId} (not in catalog)`);
+        invalid.push({ alias, nimId, error: 'Model not found in NIM catalog' });
+      }
+    }
+
+    if (invalid.length > 0) {
+      await sendDiscordAlert(invalid);
+    } else {
+      console.log('[VALIDATION] All models valid.');
+    }
+
+  } catch (err) {
+    console.warn(`[VALIDATION] /v1/models endpoint failed: ${err.message}. Skipping validation.`);
+    console.warn('[VALIDATION] Consider setting SKIP_VALIDATION=true if your NIM provider lacks a model listing endpoint.');
+  }
+}
+
+async function sendDiscordAlert(invalidModels) {
+  if (!DISCORD_WEBHOOK_URL) return;
+
+  const embed = {
+    title: '⚠️ NIM Proxy: Model Validation Failed',
+    description: `${invalidModels.length} model(s) failed validation. Check NIM catalog for deprecations.`,
+    color: 0xff4444,
+    timestamp: new Date().toISOString(),
+    fields: invalidModels.map(m => ({
+      name: `\`${m.alias}\``,
+      value: `Backend: \`${m.nimId}\`\nError: \`${m.error}\``,
+      inline: true
+    }))
+  };
+
+  try {
+    await axios.post(DISCORD_WEBHOOK_URL, {
+      embeds: [embed],
+      username: 'NIM Proxy Monitor'
+    }, { timeout: 5000 });
+    console.log('[DISCORD] Alert sent.');
+  } catch (err) {
+    console.error('[DISCORD] Failed to send alert:', err.message);
+  }
 }
 
 // ─── Helper: Safe Stream Writing ───────────────────────────────────────────
