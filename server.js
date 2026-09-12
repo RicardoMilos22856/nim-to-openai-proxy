@@ -252,6 +252,14 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
       return payload;
     }
 
+    case 'moonshotai/kimi-k3': {
+      if (!enableThinking) {
+        return { chat_template_kwargs: { thinking: false } };
+      }
+      return { chat_template_kwargs: { thinking: true } };
+    }
+
+
     case 'qwen/qwen3.5-397b-a17b': {
       // Model appears to default to thinking-on in its chat template. Only send
       // a field when the caller explicitly wants thinking OFF; otherwise let the
