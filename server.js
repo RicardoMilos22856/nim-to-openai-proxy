@@ -327,48 +327,6 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
   }
 }
 
-async function callWithFallback(baseRequest, models, enableThinking, clientReasoningEffort, hasTools) {
-  let lastError = null;
-
-  for (const model of models) {
-    try {
-      const reasoningPayload = getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools);
-
-      // Только если стрим — ставим Accept, иначе не сломаем обычные JSON-запросы
-      const acceptHeader = baseRequest.stream ? 'text/event-stream' : 'application/json';
-
-      const res = await axios.post(
-        `${NIM_API_BASE}/chat/completions`,
-        { ...baseRequest, model, ...reasoningPayload },
-        {
-          headers: {
-            Authorization: `Bearer ${NIM_API_KEY}`,
-            'Content-Type': 'application/json',
-            'Connection': 'keep-alive',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-            'Accept': acceptHeader
-          },
-          httpAgent,
-          httpsAgent,
-          responseType: baseRequest.stream ? 'stream' : 'json',
-          timeout: REQUEST_TIMEOUT_MS
-        }
-      );
-
-      return { response: res, model };
-
-    } catch (err) {
-      lastError = err;
-      console.warn(
-        `[FALLBACK] Model failed: ${model}`,
-        err.response?.status,
-        err.response?.data?.error?.message || err.message
-      );
-    }
-  }
-
-  throw lastError || new Error('All models failed');
-}
 // ─── Middleware ─────────────────────────────────────────────────────────────
 
 app.use(cors());
@@ -516,14 +474,22 @@ async function callWithFallback(baseRequest, models, enableThinking, clientReaso
     try {
       const reasoningPayload = getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools);
 
+      // Только если стрим — ставим Accept, иначе не сломаем обычные JSON-запросы
+      const acceptHeader = baseRequest.stream ? 'text/event-stream' : 'application/json';
+
       const res = await axios.post(
         `${NIM_API_BASE}/chat/completions`,
         { ...baseRequest, model, ...reasoningPayload },
         {
           headers: {
             Authorization: `Bearer ${NIM_API_KEY}`,
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Connection': 'keep-alive',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+            'Accept': acceptHeader
           },
+          httpAgent,
+          httpsAgent,
           responseType: baseRequest.stream ? 'stream' : 'json',
           timeout: REQUEST_TIMEOUT_MS
         }
