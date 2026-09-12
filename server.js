@@ -76,7 +76,7 @@ const MODEL_MAPPING = {
   'gpt-4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'llama-3.2-90b-vision-instruct': 'meta/llama-3.2-90b-vision-instruct',
-  'kimi-k3': 'moonshotai/kimi-k3',          // ← НОВОЕ
+  'kimi-k3': 'moonshotai/kimi-k3',        // ← НОВОЕ
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'm3': 'minimaxai/minimax-m3',
@@ -163,7 +163,9 @@ class StreamNormalizer {
     this.parser = null;
 
     // ONLY use content delimiters for models that embed reasoning in content
-    if (model === 'qwen/qwen3.5-397b-a17b' || model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5') {
+    if (model === 'qwen/qwen3.5-397b-a17b' || 
+    model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5' ||
+    model === 'moonshotai/kimi-k3') {
       this.parser = new DelimiterParser('<think>', '</think>');
     }
     // Models like Gemma 4, DeepSeek, GPT-OSS use structured fields and are NOT parsed here.
@@ -206,7 +208,9 @@ function normalizeNonStreamChoice(choice, model) {
 
   if (!reasoning && content) {
     let parser = null;
-    if (model === 'qwen/qwen3.5-397b-a17b' || model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5') {
+    if (model === 'qwen/qwen3.5-397b-a17b' || 
+    model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5' ||
+    model === 'moonshotai/kimi-k3') {
       parser = new DelimiterParser('<think>', '</think>');
     }
 
