@@ -295,10 +295,15 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
 
     case 'z-ai/glm-5.2':
     case 'z-ai/glm-5.3': {
+      // GLM-5.3 требует мышление внутри chat_template_kwargs
       const payload = {
-        thinking: { type: enableThinking ? 'enabled' : 'disabled' }
+        chat_template_kwargs: {
+          thinking: { type: enableThinking ? 'enabled' : 'disabled' }
+        }
       };
-      if (enableThinking && effort) payload.reasoning_effort = effort;
+      if (enableThinking && effort) {
+        payload.chat_template_kwargs.reasoning_effort = effort;
+      }
       return payload;
     }
       
