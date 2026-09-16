@@ -295,7 +295,6 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
 
     case 'z-ai/glm-5.2':
     case 'z-ai/glm-5.3': {
-      // GLM-5.3 требует мышление внутри chat_template_kwargs
       const payload = {
         chat_template_kwargs: {
           thinking: { type: enableThinking ? 'enabled' : 'disabled' }
@@ -470,46 +469,57 @@ function safeWrite(res, data) {
 // ─── Helper: Fallback Chain ─────────────────────────────────────────────────
 
 async function callWithFallback(baseRequest, models, enableThinking, clientReasoningEffort, hasTools) {
-  let lastError = null;
+  const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 100 });
+  const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 100 });
 
   for (const model of models) {
-    try {
-      const reasoningPayload = getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools);
+    let attempt = 0;
+    let lastError = null;
 
-      // Только если стрим — ставим Accept, иначе не сломаем обычные JSON-запросы
-      const acceptHeader = baseRequest.stream ? 'text/event-stream' : 'application/json';
+    while (attempt < 3) {
+      try {
+        const reasoningPayload = getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools);
 
-      const res = await axios.post(
-        `${NIM_API_BASE}/chat/completions`,
-        { ...baseRequest, model, ...reasoningPayload },
-        {
-          headers: {
-            Authorization: `Bearer ${NIM_API_KEY}`,
-            'Content-Type': 'application/json',
-            'Connection': 'keep-alive',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-            'Accept': acceptHeader
-          },
-          httpAgent,
-          httpsAgent,
-          responseType: baseRequest.stream ? 'stream' : 'json',
-          timeout: REQUEST_TIMEOUT_MS
-        }
-      );
+        const acceptHeader = baseRequest.stream ? 'text/event-stream' : 'application/json';
 
-      return { response: res, model };
+        const res = await axios.post(
+          `${NIM_API_BASE}/chat/completions`,
+          { ...baseRequest, model, ...reasoningPayload },
+          {
+            headers: {
+              Authorization: `Bearer ${NIM_API_KEY}`,
+              'Content-Type': 'application/json',
+              'Connection': 'keep-alive',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+              'Accept': acceptHeader
+            },
+            httpAgent,
+            httpsAgent,
+            responseType: baseRequest.stream ? 'stream' : 'json',
+            timeout: 45000   // 45 секунд
+          }
+        );
 
-    } catch (err) {
-      lastError = err;
-      console.warn(
-        `[FALLBACK] Model failed: ${model}`,
-        err.response?.status,
-        err.response?.data?.error?.message || err.message
-      );
+        return { response: res, model };
+
+      } catch (err) {
+        lastError = err;
+        attempt++;
+
+        console.warn(
+          `[FALLBACK] Model ${model} failed (attempt ${attempt}/3):`,
+          err.response?.status,
+          err.response?.data?.error?.message || err.message
+        );
+
+        if (attempt < 3) await new Promise(r => setTimeout(r, 1500));
+      }
     }
+
+    console.error(`[FALLBACK] All attempts failed for ${model}`);
   }
 
-  throw lastError || new Error('All models failed');
+  throw lastError || new Error('No response from bot');
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────────
