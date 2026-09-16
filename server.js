@@ -82,6 +82,7 @@ const MODEL_MAPPING = {
   'gpt-4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'llama-3.2-90b-vision-instruct': 'meta/llama-3.2-90b-vision-instruct',
+  'glm-5.3': 'z-ai/glm-5.3',
   'kimi-k3': 'moonshotai/kimi-k3',        // ← НОВОЕ
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
@@ -292,19 +293,15 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
       return {};
     }
 
-    case 'z-ai/glm-5.2': {
-      // FIX: GLM-5.2 thinks by default. `reasoning_effort` only controls
-      // intensity (max vs high) once thinking is already happening — it does
-      // NOT turn thinking off. The actual on/off switch is `thinking.type`.
-      // Without this, GLM-5.2 was silently reasoning on every single request
-      // regardless of ENABLE_THINKING_MODE.
+    case 'z-ai/glm-5.2':
+    case 'z-ai/glm-5.3': {
       const payload = {
         thinking: { type: enableThinking ? 'enabled' : 'disabled' }
       };
       if (enableThinking && effort) payload.reasoning_effort = effort;
       return payload;
     }
-
+      
     case 'google/gemma-4-31b-it': {
       if (!enableThinking) return {};
       return { chat_template_kwargs: { enable_thinking: true } };
