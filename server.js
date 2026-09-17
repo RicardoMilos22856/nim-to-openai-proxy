@@ -499,7 +499,7 @@ async function callWithFallback(baseRequest, models, enableThinking, clientReaso
             httpAgent,
             httpsAgent,
             responseType: baseRequest.stream ? 'stream' : 'json',
-            timeout: 120000
+            timeout: 180000
           }
         );
 
