@@ -295,18 +295,19 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     }
 
     case 'z-ai/glm-5.2':
-    case 'z-ai/glm-5.3':
-    case 'z-ai/glm-5.3-flash': {
-      const payload = {
-        chat_template_kwargs: {
-          thinking: { type: enableThinking ? 'enabled' : 'disabled' }
-        }
-      };
-      if (enableThinking && effort) {
-        payload.chat_template_kwargs.reasoning_effort = effort;
-      }
-      return payload;
+case 'z-ai/glm-5.3':
+case 'z-ai/glm-5.3-flash': {
+  return {
+    reasoning_effort:
+      effort && ['low', 'high', 'max'].includes(effort)
+        ? effort
+        : 'low',
+
+    chat_template_kwargs: {
+      clear_thinking: true
     }
+  };
+}
       
     case 'google/gemma-4-31b-it': {
       if (!enableThinking) return {};
