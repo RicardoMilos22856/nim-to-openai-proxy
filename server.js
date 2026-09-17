@@ -657,6 +657,17 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
           }
 
+          // Патч: Логирование чанков GLM для диагностики
+if (usedModel.includes('glm')) {
+  console.log(`[GLM DEBUG] Content len: ${clientContent.length} | Reasoning len: ${delta.reasoning ? delta.reasoning.length : 0}`);
+}
+
+// Патч: Не спамим Janitor пустыми чанками, если модель только начала думать
+if (!clientContent && !delta.reasoning) {
+  return; // Пропускаем отправку этого куска
+}
+          
+
           safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
         } catch (parseErr) {
