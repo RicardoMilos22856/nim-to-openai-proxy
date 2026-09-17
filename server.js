@@ -295,13 +295,14 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
 
     case 'z-ai/glm-5.2':
     case 'z-ai/glm-5.3': {
-      // Правильный payload для GLM-5.3 (NIM требует мышление в chat_template_kwargs)
+      // GLM-5.3 на NIM требует мышление в другом месте
       const payload = {
         chat_template_kwargs: {
-          thinking: { type: enableThinking ? 'enabled' : 'disabled' }
+          thinking: { type: 'disabled' }   // force disabled
         }
       };
-      if (enableThinking && effort) {
+      // Если клиент передаёт reasoning_effort — тоже можно
+      if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
         payload.chat_template_kwargs.reasoning_effort = effort;
       }
       return payload;
