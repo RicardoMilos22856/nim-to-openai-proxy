@@ -295,6 +295,7 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
 
     case 'z-ai/glm-5.2':
     case 'z-ai/glm-5.3': {
+      // Правильный payload для GLM-5.3 (NIM требует мышление в chat_template_kwargs)
       const payload = {
         chat_template_kwargs: {
           thinking: { type: enableThinking ? 'enabled' : 'disabled' }
