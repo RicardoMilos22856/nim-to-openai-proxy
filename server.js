@@ -83,6 +83,7 @@ const MODEL_MAPPING = {
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'llama-3.2-90b-vision-instruct': 'meta/llama-3.2-90b-vision-instruct',
   'glm-5.3': 'z-ai/glm-5.3',
+  'glm-5.3-flash': 'z-ai/glm-5.3-flash',   // новый
   'kimi-k3': 'moonshotai/kimi-k3',        // ← НОВОЕ
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
@@ -294,15 +295,14 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     }
 
     case 'z-ai/glm-5.2':
-    case 'z-ai/glm-5.3': {
-      // GLM-5.3 на NIM требует мышление в другом месте
+    case 'z-ai/glm-5.3':
+    case 'z-ai/glm-5.3-flash': {
       const payload = {
         chat_template_kwargs: {
-          thinking: { type: 'disabled' }   // force disabled
+          thinking: { type: enableThinking ? 'enabled' : 'disabled' }
         }
       };
-      // Если клиент передаёт reasoning_effort — тоже можно
-      if (effort && ['low', 'medium', 'high', 'max'].includes(effort)) {
+      if (enableThinking && effort) {
         payload.chat_template_kwargs.reasoning_effort = effort;
       }
       return payload;
