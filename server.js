@@ -275,7 +275,12 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     }
 
     case 'moonshotai/kimi-k3': {
-  return {};
+  return {
+    reasoning_effort:
+      effort && ['low', 'high', 'max'].includes(effort)
+        ? effort
+        : 'low'
+  };
 }
 
 
@@ -593,11 +598,6 @@ app.post('/v1/chat/completions', async (req, res) => {
       !!req.body.tools
     );
 
-    console.log('[DEBUG] NIM response received', {
-  model: usedModel,
-  status: response.status,
-  stream: !!stream
-});
     
     upstreamStream = response.data;
     console.log('[PROXY] Model used:', usedModel);
@@ -809,17 +809,7 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
     } else {
       // Non-streaming response
-
-      console.log('[DEBUG] NIM body received', {
-  hasChoices: !!response.data?.choices,
-  choices: response.data?.choices?.length,
-  contentLength:
-    response.data?.choices?.[0]?.message?.content?.length || 0,
-  reasoningLength:
-    response.data?.choices?.[0]?.message?.reasoning?.length || 0,
-  finishReason:
-    response.data?.choices?.[0]?.finish_reason || null
-});
+      
       console.log('[DEBUG] NIM message:', response.data?.choices?.[0]?.message);
 
       
@@ -839,12 +829,6 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
           }
 
           const finalMessage = { ...normalizedChoice.message, content };
-          console.log('[DEBUG] FINAL MESSAGE BEFORE SEND:', {
-  contentLength: content?.length || 0,
-  reasoningLength: reasoning?.length || 0,
-  content,
-  reasoning
-});
 
           // Same fix as the streaming path: keep the structured field
           // alongside the inline tags so structured-reasoning clients
