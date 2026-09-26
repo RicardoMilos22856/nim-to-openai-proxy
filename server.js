@@ -632,8 +632,12 @@ app.post('/v1/chat/completions', async (req, res) => {
           const delta = data.choices?.[0]?.delta;
 
           if (delta) {
-            const normalizedDelta = normalizer.processDelta(delta);
-            let clientContent = '';
+  const normalizedDelta = normalizer.processDelta(delta);
+
+  normalizedDelta.content = cleanModelArtifacts(normalizedDelta.content);
+  normalizedDelta.reasoning = cleanModelArtifacts(normalizedDelta.reasoning);
+
+  let clientContent = '';
 
             if (SHOW_REASONING && inlineReasoning) {
               // Legacy GoonChat behavior: bake <thinking> tags into content
