@@ -657,57 +657,47 @@ app.post('/v1/chat/completions', async (req, res) => {
 
   let clientContent = '';
 
-            if (SHOW_REASONING && inlineReasoning) {
-              // Legacy GoonChat behavior: bake <thinking> tags into content
-              if (normalizedDelta.reasoning && !reasoningOpen) {
-                clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
-                reasoningOpen = true;
-              } else if (normalizedDelta.reasoning) {
-                clientContent += normalizedDelta.reasoning;
-              }
+  if (SHOW_REASONING && inlineReasoning) {
+    // Legacy GoonChat behavior: bake <thinking> tags into content
+    if (normalizedDelta.reasoning && !reasoningOpen) {
+      clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
+      reasoningOpen = true;
+    } else if (normalizedDelta.reasoning) {
+      clientContent += normalizedDelta.reasoning;
+    }
 
-              if (normalizedDelta.content && reasoningOpen) {
-                clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
-                reasoningOpen = false;
-              } else if (normalizedDelta.content) {
-                clientContent += normalizedDelta.content;
-              }
-            } else {
-              // Default behavior: clean content, no inline tags
-              clientContent = normalizedDelta.content || '';
-            }
-
-            delta.content = clientContent;
-            
-
-            // FIX: keep a structured reasoning field alongside the inline
-            // tags in content. GoonChat parses the inline tags;
-            // clients like Pal Chat / OpenRouter-style apps look for a
-            // separate `reasoning`/`reasoning_content` field to render their
-            // own collapsible thinking UI. Without this, those clients just
-            // see one flat content blob and never show a thinking indicator.
-
-            if (normalizedDelta.reasoning) {
-  if (
-    SHOW_REASONING ||
-    usedModel === 'moonshotai/kimi-k3'
-  ) {
-    delta.reasoning = normalizedDelta.reasoning;
-    delta.reasoning_content = normalizedDelta.reasoning;
+    if (normalizedDelta.content && reasoningOpen) {
+      clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
+      reasoningOpen = false;
+    } else if (normalizedDelta.content) {
+      clientContent += normalizedDelta.content;
+    }
   } else {
+    // Default behavior: clean content, no inline tags
+    clientContent = normalizedDelta.content || '';
+  }
+
+  delta.content = clientContent;
+
+  if (normalizedDelta.reasoning) {
+    if (
+      SHOW_REASONING ||
+      usedModel === 'moonshotai/kimi-k3'
+    ) {
+      delta.reasoning = normalizedDelta.reasoning;
+      delta.reasoning_content = normalizedDelta.reasoning;
+    } else {
+      delete delta.reasoning;
+      delete delta.reasoning_content;
+    }
+  } else if (usedModel !== 'moonshotai/kimi-k3') {
     delete delta.reasoning;
     delete delta.reasoning_content;
   }
-} else if (usedModel !== 'moonshotai/kimi-k3') {
-  delete delta.reasoning;
-  delete delta.reasoning_content;
 }
 
-                    // Если upstream прислал чанк без delta — просто пропускаем его
-          if (!delta) {
-  safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
-  return;
-}
+// Если upstream прислал чанк без delta — просто пропускаем его
+safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
           
 safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
