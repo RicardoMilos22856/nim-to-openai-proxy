@@ -884,7 +884,21 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
         }
       };
 
-      res.json(openaiResponse);
+      console.log('[K3 OUT]', {
+  model: usedModel,
+  contentLength:
+    typeof openaiResponse.choices?.[0]?.message?.content === 'string'
+      ? openaiResponse.choices[0].message.content.length
+      : 0,
+  hasReasoningContent:
+    !!openaiResponse.choices?.[0]?.message?.reasoning_content,
+  reasoningContentLength:
+    typeof openaiResponse.choices?.[0]?.message?.reasoning_content === 'string'
+      ? openaiResponse.choices[0].message.reasoning_content.length
+      : 0
+});
+
+res.json(openaiResponse);
     }
 
   } catch (error) {
