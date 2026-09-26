@@ -814,6 +814,19 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
     } else {
       // Non-streaming response
+
+      console.log('[DEBUG] NIM body received', {
+  hasChoices: !!response.data?.choices,
+  choices: response.data?.choices?.length,
+  contentLength:
+    response.data?.choices?.[0]?.message?.content?.length || 0,
+  reasoningLength:
+    response.data?.choices?.[0]?.message?.reasoning?.length || 0,
+  finishReason:
+    response.data?.choices?.[0]?.finish_reason || null
+});
+
+      
       const openaiResponse = {
         id: `chatcmpl-${Date.now()}`,
         object: 'chat.completion',
