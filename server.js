@@ -658,7 +658,6 @@ app.post('/v1/chat/completions', async (req, res) => {
   let clientContent = '';
 
   if (SHOW_REASONING && inlineReasoning) {
-    // Legacy GoonChat behavior: bake <thinking> tags into content
     if (normalizedDelta.reasoning && !reasoningOpen) {
       clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
       reasoningOpen = true;
@@ -673,7 +672,6 @@ app.post('/v1/chat/completions', async (req, res) => {
       clientContent += normalizedDelta.content;
     }
   } else {
-    // Default behavior: clean content, no inline tags
     clientContent = normalizedDelta.content || '';
   }
 
@@ -696,9 +694,6 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 }
 
-// Если upstream прислал чанк без delta — просто пропускаем его
-safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
-          
 safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
         } catch (parseErr) {
