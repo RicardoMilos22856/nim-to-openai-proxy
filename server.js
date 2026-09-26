@@ -825,6 +825,7 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
   finishReason:
     response.data?.choices?.[0]?.finish_reason || null
 });
+      console.log('[DEBUG] NIM message:', response.data?.choices?.[0]?.message);
 
       
       const openaiResponse = {
