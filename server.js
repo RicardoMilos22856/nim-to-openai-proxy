@@ -275,12 +275,7 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     }
 
     case 'moonshotai/kimi-k3': {
-  return {
-    reasoning_effort:
-      effort && ['low', 'high', 'max'].includes(effort)
-        ? effort
-        : 'low'
-  };
+  return {};
 }
 
 
