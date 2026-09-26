@@ -661,10 +661,6 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
 
             delta.content = clientContent;
-
-            if (!clientContent && !(SHOW_REASONING && normalizedDelta.reasoning)) {
-  return;
-            }
             
 
             // FIX: keep a structured reasoning field alongside the inline
@@ -688,6 +684,15 @@ app.post('/v1/chat/completions', async (req, res) => {
   return;
 }
 
+console.log(
+  '[STREAM CHUNK]',
+  JSON.stringify({
+    content: delta?.content || '',
+    reasoning: delta?.reasoning || '',
+    finish_reason: data.choices?.[0]?.finish_reason || null
+  })
+);
+          
 safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
         } catch (parseErr) {
