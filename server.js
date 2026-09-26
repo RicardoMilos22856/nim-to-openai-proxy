@@ -54,6 +54,7 @@ const MAX_TOKENS_LIMIT = 131072;
 const REQUEST_TIMEOUT_MS = 300000;
 const VALIDATION_TIMEOUT_MS = 15000;
 const MAX_BUFFER_SIZE = 1024 * 1024; // 1MB
+const K3_CACHE = new Map();
 
 if (SHOW_REASONING) console.log('[CONFIG] Reasoning display: ENABLED');
 if (ENABLE_THINKING_MODE) console.log('[CONFIG] Thinking mode: ENABLED');
@@ -612,8 +613,31 @@ app.post('/v1/chat/completions', async (req, res) => {
     const primaryModel = MODEL_MAPPING[model] || 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
     const modelChain = [primaryModel, ...FALLBACK_MODELS];
 
+    const isK3 = model === 'kimi-k3' || MODEL_MAPPING[model] === 'moonshotai/kimi-k3';
+
+let nimMessages = messages;
+
+if (isK3 && messages?.at(-1)?.role === 'user') {
+  const key = JSON.stringify(messages.slice(0, -1).map(m => ({
+    ...m,
+    reasoning: undefined,
+    reasoning_content: undefined
+  })));
+
+  const cached = K3_CACHE.get(key);
+  if (cached) {
+    nimMessages = messages.map((m, i) =>
+      i === messages.length - 2 && m.role === 'assistant' && !m.reasoning_content
+        ? { ...m, reasoning_content: cached }
+        : m
+    );
+
+    console.log('[K3 CACHE] Restored:', cached.length);
+  }
+}
+    
     const baseRequest = {
-  messages,
+  messages: nimMessages,
   temperature: temperature ?? 0.7,
   max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
   stream: stream || false
@@ -903,6 +927,21 @@ console.log('[K3 OUT MESSAGE]', JSON.stringify(
   null,
   2
 ));
+
+      if (usedModel === 'moonshotai/kimi-k3') {
+  const r = openaiResponse.choices?.[0]?.message?.reasoning_content;
+
+  if (r) {
+    const key = JSON.stringify(messages.map(m => ({
+      ...m,
+      reasoning: undefined,
+      reasoning_content: undefined
+    })));
+
+    K3_CACHE.set(key, r);
+    console.log('[K3 CACHE] Saved:', r.length);
+  }
+}
 
 res.json(openaiResponse);
     }
