@@ -265,7 +265,7 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     reasoning_effort:
       effort && ['low', 'high', 'max'].includes(effort)
         ? effort
-        : 'high'
+        : 'low'
   };
 }
 
@@ -553,22 +553,32 @@ app.post('/v1/chat/completions', async (req, res) => {
 
   try {
     const {
-      model,
-      messages,
-      temperature,
-      max_tokens,
-      stream
-    } = req.body;
-
+  model,
+  messages,
+  temperature,
+  max_tokens,
+  stream,
+  top_p,
+  top_k,
+  repetition_penalty,
+  frequency_penalty,
+  presence_penalty
+} = req.body;
+    
     const primaryModel = MODEL_MAPPING[model] || 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
     const modelChain = [primaryModel, ...FALLBACK_MODELS];
 
     const baseRequest = {
-      messages,
-      temperature: temperature ?? 0.7,
-      max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
-      stream: stream || false
-    };
+  messages,
+  temperature: temperature ?? 0.7,
+  max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
+  stream: stream || false,
+  ...(top_p != null && { top_p }),
+  ...(top_k != null && { top_k }),
+  ...(repetition_penalty != null && { repetition_penalty }),
+  ...(frequency_penalty != null && { frequency_penalty }),
+  ...(presence_penalty != null && { presence_penalty })
+};
 
     const { response, model: usedModel } = await callWithFallback(
       baseRequest,
