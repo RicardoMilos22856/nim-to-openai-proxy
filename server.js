@@ -54,7 +54,6 @@ const MAX_TOKENS_LIMIT = 131072;
 const REQUEST_TIMEOUT_MS = 300000;
 const VALIDATION_TIMEOUT_MS = 15000;
 const MAX_BUFFER_SIZE = 1024 * 1024; // 1MB
-const K3_CACHE = new Map();
 
 if (SHOW_REASONING) console.log('[CONFIG] Reasoning display: ENABLED');
 if (ENABLE_THINKING_MODE) console.log('[CONFIG] Thinking mode: ENABLED');
@@ -62,9 +61,14 @@ if (ENABLE_THINKING_MODE) console.log('[CONFIG] Thinking mode: ENABLED');
 // ─── Config validation ──────────────────────────────────────────────────────
 
 function validateConfig() {
-  const fatal = (msg) => { console.error(`[FATAL] ${msg}`); process.exit(1); };
+  const fatal = (msg) => {
+    console.error(`[FATAL] ${msg}`);
+    process.exit(1);
+  };
 
-  if (!NIM_API_KEY) fatal('NIM_API_KEY is required. Get one at https://build.nvidia.com/');
+  if (!NIM_API_KEY) {
+    fatal('NIM_API_KEY is required. Get one at https://build.nvidia.com/');
+  }
 
   if (!CLIENT_AUTH_KEY) {
     console.warn('[WARN] CLIENT_AUTH_KEY not set. All requests will be rejected with 403.');
@@ -84,14 +88,15 @@ const MODEL_MAPPING = {
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
   'llama-3.2-90b-vision-instruct': 'meta/llama-3.2-90b-vision-instruct',
   'glm-5.3': 'z-ai/glm-5.3',
-  'glm-5.3-flash': 'z-ai/glm-5.3-flash',   // новый
-  'kimi-k3': 'moonshotai/kimi-k3',        // ← НОВОЕ
+  'glm-5.3-flash': 'z-ai/glm-5.3-flash',
+  'kimi-k3': 'moonshotai/kimi-k3',
   'claude-3-opus': 'openai/gpt-oss-120b',
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'm3': 'minimaxai/minimax-m3',
   'google-light': 'google/gemma-4-31b-it',
   'mistral-nemo': 'mistralai/mistral-nemotron'
 };
+
 const FALLBACK_MODELS = [
   'mistralai/mistral-nemotron',
   'openai/gpt-oss-120b'
@@ -119,48 +124,67 @@ class DelimiterParser {
 
       if (tagIndex !== -1) {
         const textBefore = this.buffer.substring(0, tagIndex);
+
         if (this.inThinking) {
           reasoning += textBefore;
         } else {
           content += textBefore;
         }
+
         this.inThinking = !this.inThinking;
         this.buffer = this.buffer.substring(tagIndex + targetTag.length);
       } else {
         // Check for partial tag at the end
         let partialLen = 0;
         const maxLen = Math.min(this.buffer.length, targetTag.length - 1);
+
         for (let i = maxLen; i > 0; i--) {
-          if (targetTag.startsWith(this.buffer.substring(this.buffer.length - i))) {
+          if (
+            targetTag.startsWith(
+              this.buffer.substring(this.buffer.length - i)
+            )
+          ) {
             partialLen = i;
             break;
           }
         }
 
-        const textBefore = this.buffer.substring(0, this.buffer.length - partialLen);
+        const textBefore = this.buffer.substring(
+          0,
+          this.buffer.length - partialLen
+        );
+
         if (this.inThinking) {
           reasoning += textBefore;
         } else {
           content += textBefore;
         }
-        this.buffer = this.buffer.substring(this.buffer.length - partialLen);
+
+        this.buffer = this.buffer.substring(
+          this.buffer.length - partialLen
+        );
+
         break;
       }
     }
+
     return { content, reasoning };
   }
 
   flush() {
     let content = '';
     let reasoning = '';
+
     if (this.buffer) {
       if (this.inThinking) {
         reasoning += this.buffer;
       } else {
         content += this.buffer;
       }
+
       this.buffer = '';
     }
+
     return { content, reasoning };
   }
 }
@@ -185,17 +209,24 @@ class StreamNormalizer {
 
     // ONLY use content delimiters for models that embed reasoning in content
     if (
-  model === 'qwen/qwen3.5-397b-a17b' ||
-  model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5'
-) {
-  this.parser = new DelimiterParser('<think>', '</think>');
-}
-    // Models like Gemma 4, DeepSeek, GPT-OSS use structured fields and are NOT parsed here.
+      model === 'qwen/qwen3.5-397b-a17b' ||
+      model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5'
+    ) {
+      this.parser = new DelimiterParser('<think>', '</think>');
+    }
+
+    // Models like Gemma 4, DeepSeek, GPT-OSS use structured fields
+    // and are NOT parsed here.
   }
 
   processDelta(delta) {
     const normalizedDelta = { ...delta };
-    let reasoning = normalizedDelta.reasoning || normalizedDelta.reasoning_content || '';
+
+    let reasoning =
+      normalizedDelta.reasoning ||
+      normalizedDelta.reasoning_content ||
+      '';
+
     let content = normalizedDelta.content || '';
 
     // Priority: Structured reasoning > Content delimiters
@@ -205,18 +236,31 @@ class StreamNormalizer {
       content = parsed.content;
     }
 
-    if (content) normalizedDelta.content = content;
-    else delete normalizedDelta.content;
+    if (content) {
+      normalizedDelta.content = content;
+    } else {
+      delete normalizedDelta.content;
+    }
 
-    if (reasoning) normalizedDelta.reasoning = reasoning;
-    else delete normalizedDelta.reasoning;
+    if (reasoning) {
+      normalizedDelta.reasoning = reasoning;
+    } else {
+      delete normalizedDelta.reasoning;
+    }
 
     delete normalizedDelta.reasoning_content;
+
     return normalizedDelta;
   }
 
   flush() {
-    if (!this.parser) return { content: '', reasoning: '' };
+    if (!this.parser) {
+      return {
+        content: '',
+        reasoning: ''
+      };
+    }
+
     return this.parser.flush();
   }
 }
@@ -225,23 +269,35 @@ function normalizeNonStreamChoice(choice, model) {
   if (!choice) return choice;
 
   const message = choice.message || {};
-  let reasoning = message.reasoning || message.reasoning_content || '';
+
+  let reasoning =
+    message.reasoning ||
+    message.reasoning_content ||
+    '';
+
   let content = message.content || '';
 
   if (!reasoning && content) {
     let parser = null;
+
     if (
-  model === 'qwen/qwen3.5-397b-a17b' ||
-  model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5'
-) {
-  parser = new DelimiterParser('<think>', '</think>');
-}
+      model === 'qwen/qwen3.5-397b-a17b' ||
+      model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5'
+    ) {
+      parser = new DelimiterParser('<think>', '</think>');
+    }
 
     if (parser) {
       const parsed = parser.processChunk(content);
       const flushed = parser.flush();
-      content = (parsed.content || '') + (flushed.content || '');
-      reasoning = (parsed.reasoning || '') + (flushed.reasoning || '');
+
+      content =
+        (parsed.content || '') +
+        (flushed.content || '');
+
+      reasoning =
+        (parsed.reasoning || '') +
+        (flushed.reasoning || '');
     }
   }
 
@@ -254,10 +310,10 @@ function normalizeNonStreamChoice(choice, model) {
   if (reasoning) {
     newMessage.reasoning = reasoning;
 
-    // Kimi K3 requires reasoning_content to be preserved
-    // for the next turn.
+    // Kimi K3 reasoning_content is preserved in the response.
     if (model === 'moonshotai/kimi-k3') {
-      newMessage.reasoning_content = message.reasoning_content || reasoning;
+      newMessage.reasoning_content =
+        message.reasoning_content || reasoning;
     }
   }
 
@@ -265,7 +321,10 @@ function normalizeNonStreamChoice(choice, model) {
     delete newMessage.reasoning_content;
   }
 
-  return { ...choice, message: newMessage };
+  return {
+    ...choice,
+    message: newMessage
+  };
 }
 
 // Pure function returning model-specific reasoning request payloads.
@@ -273,92 +332,163 @@ function normalizeNonStreamChoice(choice, model) {
 // JSON body sent to NIM via axios. Do NOT wrap anything in an `extra_body` key —
 // that's an openai-SDK-only convention this proxy doesn't use, and NIM's raw
 // REST endpoint will just silently ignore a field called "extra_body".
-function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools) {
+function getReasoningPayload(
+  model,
+  enableThinking,
+  clientReasoningEffort,
+  hasTools
+) {
   const effort = clientReasoningEffort;
 
   switch (model) {
     case 'nvidia/nemotron-3-super-120b-a12b': {
       if (!enableThinking) return {};
-      return { chat_template_kwargs: { enable_thinking: true } };
+
+      return {
+        chat_template_kwargs: {
+          enable_thinking: true
+        }
+      };
     }
 
     case 'nvidia/nemotron-3-ultra-550b-a55b': {
       if (!enableThinking) return {};
-      const payload = { chat_template_kwargs: { enable_thinking: true } };
-      // Unverified param — see header comment. Left as opt-in best-effort.
-      if (hasTools) payload.chat_template_kwargs.force_nonempty_content = true;
+
+      const payload = {
+        chat_template_kwargs: {
+          enable_thinking: true
+        }
+      };
+
+      // Unverified param — see header comment.
+      // Left as opt-in best-effort.
+      if (hasTools) {
+        payload.chat_template_kwargs.force_nonempty_content = true;
+      }
+
       return payload;
     }
 
     case 'moonshotai/kimi-k3': {
-  return {
-    reasoning_effort:
-      effort && ['low', 'high', 'max'].includes(effort)
-        ? effort
-        : 'low'
-  };
-}
-
+      return {
+        reasoning_effort:
+          effort &&
+          ['low', 'high', 'max'].includes(effort)
+            ? effort
+            : 'low'
+      };
+    }
 
     case 'qwen/qwen3.5-397b-a17b': {
-      // Model appears to default to thinking-on in its chat template. Only send
-      // a field when the caller explicitly wants thinking OFF; otherwise let the
-      // <think> delimiter parser handle whatever the model does natively.
+      // Model appears to default to thinking-on in its chat template.
+      // Only send a field when the caller explicitly wants thinking OFF.
       if (enableThinking) return {};
-      return { chat_template_kwargs: { enable_thinking: false } };
+
+      return {
+        chat_template_kwargs: {
+          enable_thinking: false
+        }
+      };
     }
 
     case 'openai/gpt-oss-120b':
     case 'openai/gpt-oss-20b': {
-      if (effort && ['low', 'medium', 'high'].includes(effort)) {
-        return { reasoning_effort: effort };
+      if (
+        effort &&
+        ['low', 'medium', 'high'].includes(effort)
+      ) {
+        return {
+          reasoning_effort: effort
+        };
       }
-      if (enableThinking) return { reasoning_effort: 'high' };
+
+      if (enableThinking) {
+        return {
+          reasoning_effort: 'high'
+        };
+      }
+
       return {};
     }
 
     case 'mistralai/mistral-medium-3.5-128b':
     case 'mistralai/mistral-small-4-119b-2603': {
-      if (effort && ['high', 'none'].includes(effort)) {
-        return { reasoning_effort: effort };
+      if (
+        effort &&
+        ['high', 'none'].includes(effort)
+      ) {
+        return {
+          reasoning_effort: effort
+        };
       }
-      if (enableThinking) return { reasoning_effort: 'high' };
+
+      if (enableThinking) {
+        return {
+          reasoning_effort: 'high'
+        };
+      }
+
       return {};
     }
 
     case 'z-ai/glm-5.2':
-case 'z-ai/glm-5.3':
-case 'z-ai/glm-5.3-flash': {
-  return {
-    reasoning_effort:
-      effort && ['low', 'high', 'max'].includes(effort)
-        ? effort
-        : 'low',
+    case 'z-ai/glm-5.3':
+    case 'z-ai/glm-5.3-flash': {
+      return {
+        reasoning_effort:
+          effort &&
+          ['low', 'high', 'max'].includes(effort)
+            ? effort
+            : 'low',
 
-    chat_template_kwargs: {
-      clear_thinking: true
+        chat_template_kwargs: {
+          clear_thinking: true
+        }
+      };
     }
-  };
-}
-      
+
     case 'google/gemma-4-31b-it': {
       if (!enableThinking) return {};
-      return { chat_template_kwargs: { enable_thinking: true } };
+
+      return {
+        chat_template_kwargs: {
+          enable_thinking: true
+        }
+      };
     }
 
     case 'stepfun-ai/step-3.7-flash': {
-      return { chat_template_kwargs: { thinking: false } };
+      return {
+        chat_template_kwargs: {
+          thinking: false
+        }
+      };
     }
 
     default:
-      // Перехватываем DeepSeek V4 Pro (0813) и Flash в едином дефолтном блоке
-      if (model.includes('deepseek-ai/deepseek-v4-pro') || model.includes('deepseek-ai/deepseek-v4-flash')) {
+      // Перехватываем DeepSeek V4 Pro (0813) и Flash
+      // в едином дефолтном блоке
+      if (
+        model.includes('deepseek-ai/deepseek-v4-pro') ||
+        model.includes('deepseek-ai/deepseek-v4-flash')
+      ) {
         if (!enableThinking) return {};
-        const payload = { chat_template_kwargs: { thinking: true } };
-        if (effort) payload.chat_template_kwargs.reasoning_effort = effort;
+
+        const payload = {
+          chat_template_kwargs: {
+            thinking: true
+          }
+        };
+
+        if (effort) {
+          payload.chat_template_kwargs.reasoning_effort = effort;
+        }
+
         return payload;
       }
-      // Default reasoning models (Kimi, MiniMax, etc.) or non-reasoning models
+
+      // Default reasoning models (Kimi, MiniMax, etc.)
+      // or non-reasoning models
       return {};
   }
 }
@@ -370,27 +500,45 @@ app.use(express.json({ limit: '10mb' }));
 
 // FIX: Extract token AFTER "Bearer " prefix, compare only the token
 function extractBearerToken(authHeader) {
-  if (!authHeader || typeof authHeader !== 'string') return null;
+  if (!authHeader || typeof authHeader !== 'string') {
+    return null;
+  }
+
   const parts = authHeader.trim().split(' ');
-  if (parts.length !== 2 || parts[0] !== 'Bearer') return null;
+
+  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    return null;
+  }
+
   return parts[1];
 }
 
 function safeTimingEqual(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
+  if (!a || !b || a.length !== b.length) {
+    return false;
+  }
+
   try {
-    return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+    return timingSafeEqual(
+      Buffer.from(a),
+      Buffer.from(b)
+    );
   } catch {
     return false;
   }
 }
 
 app.use((req, res, next) => {
-  if (req.path === '/health' || req.path === '/v1/models') {
+  if (
+    req.path === '/health' ||
+    req.path === '/v1/models'
+  ) {
     return next();
   }
 
-  const token = extractBearerToken(req.headers.authorization);
+  const token = extractBearerToken(
+    req.headers.authorization
+  );
 
   if (!token || !CLIENT_AUTH_KEY) {
     return res.status(403).json({
@@ -423,16 +571,21 @@ async function validateModels() {
     return;
   }
 
-  console.log('[VALIDATION] Checking model availability via /v1/models...');
+  console.log(
+    '[VALIDATION] Checking model availability via /v1/models...'
+  );
 
   try {
-    const response = await axios.get(`${NIM_API_BASE}/models`, {
-      headers: {
-        Authorization: `Bearer ${NIM_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: VALIDATION_TIMEOUT_MS
-    });
+    const response = await axios.get(
+      `${NIM_API_BASE}/models`,
+      {
+        headers: {
+          Authorization: `Bearer ${NIM_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: VALIDATION_TIMEOUT_MS
+      }
+    );
 
     const availableModels = new Set(
       (response.data.data || []).map(m => m.id)
@@ -442,10 +595,19 @@ async function validateModels() {
 
     for (const [alias, nimId] of Object.entries(MODEL_MAPPING)) {
       if (availableModels.has(nimId)) {
-        console.log(`[VALIDATION] ✓ ${alias} → ${nimId}`);
+        console.log(
+          `[VALIDATION] ✓ ${alias} → ${nimId}`
+        );
       } else {
-        console.warn(`[VALIDATION] ✗ ${alias} → ${nimId} (not in catalog)`);
-        invalid.push({ alias, nimId, error: 'Model not found in NIM catalog' });
+        console.warn(
+          `[VALIDATION] ✗ ${alias} → ${nimId} (not in catalog)`
+        );
+
+        invalid.push({
+          alias,
+          nimId,
+          error: 'Model not found in NIM catalog'
+        });
       }
     }
 
@@ -456,8 +618,13 @@ async function validateModels() {
     }
 
   } catch (err) {
-    console.warn(`[VALIDATION] /v1/models endpoint failed: ${err.message}. Skipping validation.`);
-    console.warn('[VALIDATION] Consider setting SKIP_VALIDATION=true if your NIM provider lacks a model listing endpoint.');
+    console.warn(
+      `[VALIDATION] /v1/models endpoint failed: ${err.message}. Skipping validation.`
+    );
+
+    console.warn(
+      '[VALIDATION] Consider setting SKIP_VALIDATION=true if your NIM provider lacks a model listing endpoint.'
+    );
   }
 }
 
@@ -466,24 +633,42 @@ async function sendDiscordAlert(invalidModels) {
 
   const embed = {
     title: '⚠️ NIM Proxy: Model Validation Failed',
-    description: `${invalidModels.length} model(s) failed validation. Check NIM catalog for deprecations.`,
+
+    description:
+      `${invalidModels.length} model(s) failed validation. ` +
+      'Check NIM catalog for deprecations.',
+
     color: 0xff4444,
     timestamp: new Date().toISOString(),
+
     fields: invalidModels.map(m => ({
       name: `\`${m.alias}\``,
-      value: `Backend: \`${m.nimId}\`\nError: \`${m.error}\``,
+      value:
+        `Backend: \`${m.nimId}\`\n` +
+        `Error: \`${m.error}\``,
       inline: true
     }))
   };
 
   try {
-    await axios.post(DISCORD_WEBHOOK_URL, {
-      embeds: [embed],
-      username: 'NIM Proxy Monitor'
-    }, { timeout: 5000 });
+    await axios.post(
+      DISCORD_WEBHOOK_URL,
+      {
+        embeds: [embed],
+        username: 'NIM Proxy Monitor'
+      },
+      {
+        timeout: 5000
+      }
+    );
+
     console.log('[DISCORD] Alert sent.');
+
   } catch (err) {
-    console.error('[DISCORD] Failed to send alert:', err.message);
+    console.error(
+      '[DISCORD] Failed to send alert:',
+      err.message
+    );
   }
 }
 
@@ -491,21 +676,42 @@ async function sendDiscordAlert(invalidModels) {
 
 function safeWrite(res, data) {
   try {
-    if (!res.writableEnded && !res.destroyed && res.writable) {
+    if (
+      !res.writableEnded &&
+      !res.destroyed &&
+      res.writable
+    ) {
       res.write(data);
       return true;
     }
   } catch (err) {
-    console.warn('[STREAM] Write failed:', err.message);
+    console.warn(
+      '[STREAM] Write failed:',
+      err.message
+    );
   }
+
   return false;
 }
 
 // ─── Helper: Fallback Chain ─────────────────────────────────────────────────
 
-async function callWithFallback(baseRequest, models, enableThinking, clientReasoningEffort, hasTools) {
-  const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 100 });
-  const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 100 });
+async function callWithFallback(
+  baseRequest,
+  models,
+  enableThinking,
+  clientReasoningEffort,
+  hasTools
+) {
+  const httpAgent = new http.Agent({
+    keepAlive: true,
+    maxSockets: 100
+  });
+
+  const httpsAgent = new https.Agent({
+    keepAlive: true,
+    maxSockets: 100
+  });
 
   for (const model of models) {
     let attempt = 0;
@@ -513,29 +719,56 @@ async function callWithFallback(baseRequest, models, enableThinking, clientReaso
 
     while (attempt < 3) {
       try {
-        const reasoningPayload = getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTools);
+        const reasoningPayload =
+          getReasoningPayload(
+            model,
+            enableThinking,
+            clientReasoningEffort,
+            hasTools
+          );
 
-        const acceptHeader = baseRequest.stream ? 'text/event-stream' : 'application/json';
+        const acceptHeader =
+          baseRequest.stream
+            ? 'text/event-stream'
+            : 'application/json';
 
         const res = await axios.post(
           `${NIM_API_BASE}/chat/completions`,
-          { ...baseRequest, model, ...reasoningPayload },
+
+          {
+            ...baseRequest,
+            model,
+            ...reasoningPayload
+          },
+
           {
             headers: {
               Authorization: `Bearer ${NIM_API_KEY}`,
               'Content-Type': 'application/json',
               'Connection': 'keep-alive',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
+                'AppleWebKit/537.36 (KHTML, like Gecko) ' +
+                'Chrome/129.0.0.0 Safari/537.36',
               'Accept': acceptHeader
             },
+
             httpAgent,
             httpsAgent,
-            responseType: baseRequest.stream ? 'stream' : 'json',
+
+            responseType:
+              baseRequest.stream
+                ? 'stream'
+                : 'json',
+
             timeout: 150000
           }
         );
 
-        return { response: res, model };
+        return {
+          response: res,
+          model
+        };
 
       } catch (err) {
         lastError = err;
@@ -544,28 +777,42 @@ async function callWithFallback(baseRequest, models, enableThinking, clientReaso
         console.warn(
           `[FALLBACK] Model ${model} failed (attempt ${attempt}/3):`,
           err.response?.status,
-          err.response?.data?.error?.message || err.message
+          err.response?.data?.error?.message ||
+            err.message
         );
 
-        if (attempt < 3) await new Promise(r => setTimeout(r, 1500));
+        if (attempt < 3) {
+          await new Promise(r =>
+            setTimeout(r, 1500)
+          );
+        }
       }
     }
 
-    console.error(`[FALLBACK] All attempts failed for ${model}`);
+    console.error(
+      `[FALLBACK] All attempts failed for ${model}`
+    );
   }
 
-  throw lastError || new Error('No response from bot');
+  throw (
+    lastError ||
+    new Error('No response from bot')
+  );
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: '2.2.0' });
+  res.json({
+    status: 'ok',
+    version: '2.2.0'
+  });
 });
 
 app.get('/v1/models', (req, res) => {
   res.json({
     object: 'list',
+
     data: Object.keys(MODEL_MAPPING).map(id => ({
       id,
       object: 'model',
@@ -578,72 +825,42 @@ app.get('/v1/models', (req, res) => {
 app.post('/v1/chat/completions', async (req, res) => {
   let streamEndedCleanly = false;
   let upstreamStream = null;
-  // ФИКС: Объявляем переменную, чтобы сервер не падал
-  const inlineReasoning = req.headers['x-reasoning-format'] === 'inline';
+
+  const inlineReasoning =
+    req.headers['x-reasoning-format'] === 'inline';
 
   try {
     const {
-  model,
-  messages,
-  temperature,
-  max_tokens,
-  stream
-} = req.body;
+      model,
+      messages,
+      temperature,
+      max_tokens,
+      stream
+    } = req.body;
 
-    if (model === 'kimi-k3' || MODEL_MAPPING[model] === 'moonshotai/kimi-k3') {
-  const lastAssistant = [...(messages || [])]
-    .reverse()
-    .find(m => m.role === 'assistant');
+    const primaryModel =
+      MODEL_MAPPING[model] ||
+      'nvidia/llama-3.3-nemotron-super-49b-v1.5';
 
-  console.log('[K3 CONTEXT]', {
-    messages: messages?.length || 0,
-    lastAssistantContentLength:
-      typeof lastAssistant?.content === 'string'
-        ? lastAssistant.content.length
-        : 0,
-    lastAssistantHasReasoning:
-      !!lastAssistant?.reasoning_content,
-    lastAssistantReasoningLength:
-      typeof lastAssistant?.reasoning_content === 'string'
-        ? lastAssistant.reasoning_content.length
-        : 0
-  });
-}
-    
-    const primaryModel = MODEL_MAPPING[model] || 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
-    const modelChain = [primaryModel, ...FALLBACK_MODELS];
+    const modelChain = [
+      primaryModel,
+      ...FALLBACK_MODELS
+    ];
 
-    const isK3 = model === 'kimi-k3' || MODEL_MAPPING[model] === 'moonshotai/kimi-k3';
-
-let nimMessages = messages;
-
-if (isK3 && messages?.at(-1)?.role === 'user') {
-  const key = JSON.stringify(messages.slice(0, -1).map(m => ({
-    ...m,
-    reasoning: undefined,
-    reasoning_content: undefined
-  })));
-
-  const cached = K3_CACHE.get(key);
-  if (cached) {
-    nimMessages = messages.map((m, i) =>
-      i === messages.length - 2 && m.role === 'assistant' && !m.reasoning_content
-        ? { ...m, reasoning_content: cached }
-        : m
-    );
-
-    console.log('[K3 CACHE] Restored:', cached.length);
-  }
-}
-    
     const baseRequest = {
-  messages: nimMessages,
-  temperature: temperature ?? 0.7,
-  max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
-  stream: stream || false
-};
-    
-    const { response, model: usedModel } = await callWithFallback(
+      messages,
+      temperature: temperature ?? 0.7,
+      max_tokens: Math.min(
+        max_tokens ?? 2048,
+        MAX_TOKENS_LIMIT
+      ),
+      stream: stream || false
+    };
+
+    const {
+      response,
+      model: usedModel
+    } = await callWithFallback(
       baseRequest,
       modelChain,
       ENABLE_THINKING_MODE,
@@ -651,325 +868,528 @@ if (isK3 && messages?.at(-1)?.role === 'user') {
       !!req.body.tools
     );
 
-    
     upstreamStream = response.data;
-    console.log('[PROXY] Model used:', usedModel);
-    
-    if (stream) {
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
 
-      const decoder = new StringDecoder('utf8');
+    console.log(
+      '[PROXY] Model used:',
+      usedModel
+    );
+
+    if (stream) {
+      res.setHeader(
+        'Content-Type',
+        'text/event-stream'
+      );
+
+      res.setHeader(
+        'Cache-Control',
+        'no-cache'
+      );
+
+      res.setHeader(
+        'Connection',
+        'keep-alive'
+      );
+
+      const decoder =
+        new StringDecoder('utf8');
+
       let buffer = '';
       let reasoningOpen = false;
       let doneSent = false;
       let cleanedUp = false;
 
-      const normalizer = new StreamNormalizer(usedModel);
+      const normalizer =
+        new StreamNormalizer(usedModel);
 
       const cleanup = () => {
         if (cleanedUp) return;
+
         cleanedUp = true;
+
         if (upstreamStream) {
           upstreamStream.removeAllListeners();
         }
+
         req.removeAllListeners('close');
       };
 
       const processLine = (line) => {
-        if (!line.startsWith('data: ')) return;
+        if (!line.startsWith('data: ')) {
+          return;
+        }
 
         if (line.includes('[DONE]')) {
           if (!doneSent) {
-            safeWrite(res, 'data: [DONE]\n\n');
+            safeWrite(
+              res,
+              'data: [DONE]\n\n'
+            );
+
             doneSent = true;
           }
+
           streamEndedCleanly = true;
           return;
         }
 
         try {
-          const data = JSON.parse(line.slice(6));
-          const delta = data.choices?.[0]?.delta;
+          const data =
+            JSON.parse(line.slice(6));
+
+          const delta =
+            data.choices?.[0]?.delta;
 
           if (delta) {
-  const normalizedDelta = normalizer.processDelta(delta);
+            const normalizedDelta =
+              normalizer.processDelta(delta);
 
-  normalizedDelta.content = cleanModelArtifacts(normalizedDelta.content);
-  normalizedDelta.reasoning = cleanModelArtifacts(normalizedDelta.reasoning);
+            normalizedDelta.content =
+              cleanModelArtifacts(
+                normalizedDelta.content
+              );
 
-  let clientContent = '';
+            normalizedDelta.reasoning =
+              cleanModelArtifacts(
+                normalizedDelta.reasoning
+              );
 
-  if (SHOW_REASONING && inlineReasoning) {
-    if (normalizedDelta.reasoning && !reasoningOpen) {
-      clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
-      reasoningOpen = true;
-    } else if (normalizedDelta.reasoning) {
-      clientContent += normalizedDelta.reasoning;
-    }
+            let clientContent = '';
 
-    if (normalizedDelta.content && reasoningOpen) {
-      clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
-      reasoningOpen = false;
-    } else if (normalizedDelta.content) {
-      clientContent += normalizedDelta.content;
-    }
-  } else {
-    clientContent = normalizedDelta.content || '';
-  }
+            if (
+              SHOW_REASONING &&
+              inlineReasoning
+            ) {
+              if (
+                normalizedDelta.reasoning &&
+                !reasoningOpen
+              ) {
+                clientContent +=
+                  `<thinking>\n${normalizedDelta.reasoning}`;
 
-  delta.content = clientContent;
+                reasoningOpen = true;
 
-  if (normalizedDelta.reasoning) {
-    if (
-      SHOW_REASONING ||
-      usedModel === 'moonshotai/kimi-k3'
-    ) {
-      delta.reasoning = normalizedDelta.reasoning;
-      delta.reasoning_content = normalizedDelta.reasoning;
-    } else {
-      delete delta.reasoning;
-      delete delta.reasoning_content;
-    }
-  } else if (usedModel !== 'moonshotai/kimi-k3') {
-    delete delta.reasoning;
-    delete delta.reasoning_content;
-  }
-}
+              } else if (
+                normalizedDelta.reasoning
+              ) {
+                clientContent +=
+                  normalizedDelta.reasoning;
+              }
 
-safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
+              if (
+                normalizedDelta.content &&
+                reasoningOpen
+              ) {
+                clientContent +=
+                  `\n</thinking>\n\n${normalizedDelta.content}`;
+
+                reasoningOpen = false;
+
+              } else if (
+                normalizedDelta.content
+              ) {
+                clientContent +=
+                  normalizedDelta.content;
+              }
+
+            } else {
+              clientContent =
+                normalizedDelta.content || '';
+            }
+
+            delta.content = clientContent;
+
+            if (normalizedDelta.reasoning) {
+              if (
+                SHOW_REASONING ||
+                usedModel === 'moonshotai/kimi-k3'
+              ) {
+                delta.reasoning =
+                  normalizedDelta.reasoning;
+
+                delta.reasoning_content =
+                  normalizedDelta.reasoning;
+              } else {
+                delete delta.reasoning;
+                delete delta.reasoning_content;
+              }
+
+            } else if (
+              usedModel !== 'moonshotai/kimi-k3'
+            ) {
+              delete delta.reasoning;
+              delete delta.reasoning_content;
+            }
+          }
+
+          safeWrite(
+            res,
+            `data: ${JSON.stringify(data)}\n\n`
+          );
 
         } catch (parseErr) {
-          console.warn('[STREAM] Invalid JSON line:', line.slice(0, 100));
-          safeWrite(res, `data: ${JSON.stringify({
-            error: {
-              message: 'Upstream sent malformed chunk',
-              type: 'stream_parse_error',
-              details: line.slice(0, 100)
-            }
-          })}\n\n`);
+          console.warn(
+            '[STREAM] Invalid JSON line:',
+            line.slice(0, 100)
+          );
+
+          safeWrite(
+            res,
+            `data: ${JSON.stringify({
+              error: {
+                message:
+                  'Upstream sent malformed chunk',
+                type: 'stream_parse_error',
+                details:
+                  line.slice(0, 100)
+              }
+            })}\n\n`
+          );
         }
       };
 
-      upstreamStream.on('data', chunk => {
-        buffer += decoder.write(chunk);
+      upstreamStream.on(
+        'data',
+        chunk => {
+          buffer += decoder.write(chunk);
 
-        if (buffer.length > MAX_BUFFER_SIZE) {
-          console.error('[STREAM] Buffer overflow, destroying connection');
-          safeWrite(res, `data: ${JSON.stringify({
-            error: {
-              message: 'Stream buffer overflow',
-              type: 'stream_error'
-            }
-          })}\n\n`);
-          safeWrite(res, 'data: [DONE]\n\n');
-          res.end();
-          upstreamStream.destroy();
-          cleanup();
-          return;
-        }
+          if (
+            buffer.length >
+            MAX_BUFFER_SIZE
+          ) {
+            console.error(
+              '[STREAM] Buffer overflow, destroying connection'
+            );
 
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+            safeWrite(
+              res,
+              `data: ${JSON.stringify({
+                error: {
+                  message:
+                    'Stream buffer overflow',
+                  type: 'stream_error'
+                }
+              })}\n\n`
+            );
 
-        for (const line of lines) {
-          processLine(line);
-        }
-      });
+            safeWrite(
+              res,
+              'data: [DONE]\n\n'
+            );
 
-      upstreamStream.on('end', () => {
-        buffer += decoder.end();
+            res.end();
+            upstreamStream.destroy();
+            cleanup();
 
-        if (buffer.trim()) {
-          for (const line of buffer.split('\n')) {
+            return;
+          }
+
+          const lines =
+            buffer.split('\n');
+
+          buffer =
+            lines.pop() || '';
+
+          for (const line of lines) {
             processLine(line);
           }
         }
+      );
 
-        const flushedDelta = normalizer.flush();
-        if (flushedDelta.content || flushedDelta.reasoning) {
-          let clientContent = '';
-          if (SHOW_REASONING && inlineReasoning) {
-            // Legacy GoonChat behavior: bake <thinking> tags into content
-            if (flushedDelta.reasoning && !reasoningOpen) {
-              clientContent += `<thinking>\n${flushedDelta.reasoning}`;
-              reasoningOpen = true;
-            } else if (flushedDelta.reasoning) {
-              clientContent += flushedDelta.reasoning;
+      upstreamStream.on(
+        'end',
+        () => {
+          buffer += decoder.end();
+
+          if (buffer.trim()) {
+            for (
+              const line of buffer.split('\n')
+            ) {
+              processLine(line);
             }
-            if (flushedDelta.content && reasoningOpen) {
-              clientContent += `\n</thinking>\n\n${flushedDelta.content}`;
-              reasoningOpen = false;
-            } else if (flushedDelta.content) {
-              clientContent += flushedDelta.content;
-            }
-          } else {
-            // Default behavior: clean content, no inline tags
-            clientContent = flushedDelta.content || '';
           }
-          if (clientContent) {
-            safeWrite(res, `data: ${JSON.stringify({ choices: [{ delta: { content: clientContent } }] })}\n\n`);
-          }
-        }
 
-        if (!doneSent) {
-          safeWrite(res, 'data: [DONE]\n\n');
-        }
+          const flushedDelta =
+            normalizer.flush();
 
-        streamEndedCleanly = true;
-        if (!res.writableEnded) {
-          res.end();
-        }
-        cleanup();
-      });
+          if (
+            flushedDelta.content ||
+            flushedDelta.reasoning
+          ) {
+            let clientContent = '';
 
-      upstreamStream.on('error', err => {
-        console.error('[STREAM] Upstream error:', err.message);
+            if (
+              SHOW_REASONING &&
+              inlineReasoning
+            ) {
+              if (
+                flushedDelta.reasoning &&
+                !reasoningOpen
+              ) {
+                clientContent +=
+                  `<thinking>\n${flushedDelta.reasoning}`;
 
-        if (!res.writableEnded) {
-          safeWrite(res, `data: ${JSON.stringify({
-            error: {
-              message: 'Stream interrupted by upstream error',
-              type: 'stream_error'
+                reasoningOpen = true;
+
+              } else if (
+                flushedDelta.reasoning
+              ) {
+                clientContent +=
+                  flushedDelta.reasoning;
+              }
+
+              if (
+                flushedDelta.content &&
+                reasoningOpen
+              ) {
+                clientContent +=
+                  `\n</thinking>\n\n${flushedDelta.content}`;
+
+                reasoningOpen = false;
+
+              } else if (
+                flushedDelta.content
+              ) {
+                clientContent +=
+                  flushedDelta.content;
+              }
+
+            } else {
+              clientContent =
+                flushedDelta.content || '';
             }
-          })}\n\n`);
-          safeWrite(res, 'data: [DONE]\n\n');
-          res.end();
+
+            if (clientContent) {
+              safeWrite(
+                res,
+                `data: ${JSON.stringify({
+                  choices: [
+                    {
+                      delta: {
+                        content:
+                          clientContent
+                      }
+                    }
+                  ]
+                })}\n\n`
+              );
+            }
+          }
+
+          if (!doneSent) {
+            safeWrite(
+              res,
+              'data: [DONE]\n\n'
+            );
+          }
+
+          streamEndedCleanly = true;
+
+          if (!res.writableEnded) {
+            res.end();
+          }
+
+          cleanup();
         }
-        cleanup();
-      });
+      );
+
+      upstreamStream.on(
+        'error',
+        err => {
+          console.error(
+            '[STREAM] Upstream error:',
+            err.message
+          );
+
+          if (!res.writableEnded) {
+            safeWrite(
+              res,
+              `data: ${JSON.stringify({
+                error: {
+                  message:
+                    'Stream interrupted by upstream error',
+                  type: 'stream_error'
+                }
+              })}\n\n`
+            );
+
+            safeWrite(
+              res,
+              'data: [DONE]\n\n'
+            );
+
+            res.end();
+          }
+
+          cleanup();
+        }
+      );
 
       req.on('close', () => {
-        const clientGone = req.destroyed || !res.writable;
+        const clientGone =
+          req.destroyed ||
+          !res.writable;
 
-        if (!streamEndedCleanly && clientGone) {
-          console.warn('[STREAM] Client disconnected prematurely');
+        if (
+          !streamEndedCleanly &&
+          clientGone
+        ) {
+          console.warn(
+            '[STREAM] Client disconnected prematurely'
+          );
         }
 
-        if (upstreamStream && !upstreamStream.destroyed && !streamEndedCleanly) {
+        if (
+          upstreamStream &&
+          !upstreamStream.destroyed &&
+          !streamEndedCleanly
+        ) {
           upstreamStream.destroy();
         }
+
         cleanup();
       });
 
     } else {
       // Non-streaming response
 
-      
       const openaiResponse = {
         id: `chatcmpl-${Date.now()}`,
+
         object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: model,
-        choices: (response.data.choices || []).map((choice, i) => {
-          const normalizedChoice = normalizeNonStreamChoice(choice, usedModel);
-          let content = normalizedChoice.message?.content || '';
-          const reasoning = normalizedChoice.message?.reasoning || '';
 
-          if (SHOW_REASONING && inlineReasoning && reasoning) {
-            // Legacy GoonChat behavior: bake <thinking> tags into content
-            content = `<thinking>\n${reasoning}\n</thinking>\n\n${content}`;
+        created:
+          Math.floor(Date.now() / 1000),
+
+        model,
+
+        choices:
+          (response.data.choices || [])
+            .map((choice, i) => {
+              const normalizedChoice =
+                normalizeNonStreamChoice(
+                  choice,
+                  usedModel
+                );
+
+              let content =
+                normalizedChoice.message
+                  ?.content || '';
+
+              const reasoning =
+                normalizedChoice.message
+                  ?.reasoning || '';
+
+              if (
+                SHOW_REASONING &&
+                inlineReasoning &&
+                reasoning
+              ) {
+                content =
+                  `<thinking>\n${reasoning}\n</thinking>\n\n${content}`;
+              }
+
+              const finalMessage = {
+                ...normalizedChoice.message,
+                content
+              };
+
+              // Keep structured reasoning for K3.
+              if (reasoning) {
+                if (
+                  usedModel ===
+                  'moonshotai/kimi-k3'
+                ) {
+                  finalMessage.reasoning =
+                    reasoning;
+
+                  finalMessage.reasoning_content =
+                    reasoning;
+
+                } else if (SHOW_REASONING) {
+                  finalMessage.reasoning =
+                    reasoning;
+
+                  finalMessage.reasoning_content =
+                    reasoning;
+
+                } else {
+                  delete finalMessage.reasoning;
+                  delete finalMessage.reasoning_content;
+                }
+
+              } else if (
+                usedModel !==
+                'moonshotai/kimi-k3'
+              ) {
+                delete finalMessage.reasoning;
+                delete finalMessage.reasoning_content;
+              }
+
+              return {
+                ...normalizedChoice,
+                index: i,
+                message: finalMessage
+              };
+            }),
+
+        usage:
+          response.data.usage || {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0
           }
-
-          const finalMessage = { ...normalizedChoice.message, content };
-
-          // Same fix as the streaming path: keep the structured field
-          // alongside the inline tags so structured-reasoning clients
-          // (Pal Chat, OpenRouter-style apps) can render their own UI.
-          if (reasoning) {
-  if (usedModel === 'moonshotai/kimi-k3') {
-    // K3 needs this field preserved for future turns.
-    finalMessage.reasoning = reasoning;
-    finalMessage.reasoning_content = reasoning;
-  } else if (SHOW_REASONING) {
-    finalMessage.reasoning = reasoning;
-    finalMessage.reasoning_content = reasoning;
-  } else {
-    delete finalMessage.reasoning;
-    delete finalMessage.reasoning_content;
-  }
-} else if (usedModel !== 'moonshotai/kimi-k3') {
-  delete finalMessage.reasoning;
-  delete finalMessage.reasoning_content;
-}
-
-          const finalChoice = {
-            ...normalizedChoice,
-            index: i,
-            message: finalMessage
-          };
-          return finalChoice;
-        }),
-        usage: response.data.usage || {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0
-        }
       };
 
-      console.log('[K3 OUT]', {
-  model: usedModel,
-  contentLength:
-    typeof openaiResponse.choices?.[0]?.message?.content === 'string'
-      ? openaiResponse.choices[0].message.content.length
-      : 0,
-  hasReasoningContent:
-    !!openaiResponse.choices?.[0]?.message?.reasoning_content,
-  reasoningContentLength:
-    typeof openaiResponse.choices?.[0]?.message?.reasoning_content === 'string'
-      ? openaiResponse.choices[0].message.reasoning_content.length
-      : 0
-});
-
-console.log('[K3 OUT MESSAGE]', JSON.stringify(
-  openaiResponse.choices?.[0]?.message,
-  null,
-  2
-));
-
-      if (usedModel === 'moonshotai/kimi-k3') {
-  const r = openaiResponse.choices?.[0]?.message?.reasoning_content;
-
-  if (r) {
-    const key = JSON.stringify(messages.map(m => ({
-      ...m,
-      reasoning: undefined,
-      reasoning_content: undefined
-    })));
-
-    K3_CACHE.set(key, r);
-    console.log('[K3 CACHE] Saved:', r.length);
-  }
-}
-
-res.json(openaiResponse);
+      res.json(openaiResponse);
     }
 
   } catch (error) {
-    console.error('[PROXY] Fatal error:', error.message);
-    console.error('[PROXY] NIM response:', error.response?.data);
+    console.error(
+      '[PROXY] Fatal error:',
+      error.message
+    );
+
+    console.error(
+      '[PROXY] NIM response:',
+      error.response?.data
+    );
 
     if (!res.headersSent) {
-      res.status(error.response?.status || 500).json({
+      res.status(
+        error.response?.status || 500
+      ).json({
         error: {
           message: error.message,
           type: 'invalid_request_error',
-          code: error.response?.status || 500
+          code:
+            error.response?.status || 500
         }
       });
+
     } else if (!res.writableEnded) {
-      safeWrite(res, `data: ${JSON.stringify({
-        error: {
-          message: error.message,
-          type: 'proxy_error'
-        }
-      })}\n\n`);
-      safeWrite(res, 'data: [DONE]\n\n');
+      safeWrite(
+        res,
+        `data: ${JSON.stringify({
+          error: {
+            message: error.message,
+            type: 'proxy_error'
+          }
+        })}\n\n`
+      );
+
+      safeWrite(
+        res,
+        'data: [DONE]\n\n'
+      );
+
       res.end();
     }
 
-    if (upstreamStream && !upstreamStream.destroyed) {
+    if (
+      upstreamStream &&
+      !upstreamStream.destroyed
+    ) {
       upstreamStream.destroy();
     }
   }
@@ -978,7 +1398,8 @@ res.json(openaiResponse);
 app.use((req, res) => {
   res.status(404).json({
     error: {
-      message: `Endpoint ${req.method} ${req.path} not found`,
+      message:
+        `Endpoint ${req.method} ${req.path} not found`,
       type: 'invalid_request_error',
       code: 404
     }
@@ -988,10 +1409,18 @@ app.use((req, res) => {
 // ─── Startup ───────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`[PROXY] Hybrid proxy running on port ${PORT}`);
-  console.log(`[PROXY] Max tokens limit: ${MAX_TOKENS_LIMIT}`);
+  console.log(
+    `[PROXY] Hybrid proxy running on port ${PORT}`
+  );
+
+  console.log(
+    `[PROXY] Max tokens limit: ${MAX_TOKENS_LIMIT}`
+  );
 
   validateModels().catch(err => {
-    console.error('[VALIDATION] Startup check failed:', err.message);
+    console.error(
+      '[VALIDATION] Startup check failed:',
+      err.message
+    );
   });
 });
