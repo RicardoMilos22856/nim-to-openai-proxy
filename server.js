@@ -803,8 +803,6 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
     } else {
       // Non-streaming response
-      
-      console.log('[DEBUG] NIM message:', response.data?.choices?.[0]?.message);
 
       
       const openaiResponse = {
