@@ -164,6 +164,17 @@ class DelimiterParser {
   }
 }
 
+function cleanModelArtifacts(text) {
+  if (!text) return text;
+
+  return text
+    .replace(/<\|close\|>/g, '')
+    .replace(/<\|message\|>/g, '')
+    .replace(/<\|end\|>/g, '')
+    .replace(/<\|im_end\|>/g, '')
+    .replace(/<\|im_start\|>/g, '');
+}
+
 // Normalizes structured reasoning fields and extracts content delimiters.
 class StreamNormalizer {
   constructor(model) {
@@ -171,11 +182,12 @@ class StreamNormalizer {
     this.parser = null;
 
     // ONLY use content delimiters for models that embed reasoning in content
-    if (model === 'qwen/qwen3.5-397b-a17b' || 
-    model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5' ||
-    model === 'moonshotai/kimi-k3') {
-      this.parser = new DelimiterParser('<think>', '</think>');
-    }
+    if (
+  model === 'qwen/qwen3.5-397b-a17b' ||
+  model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5'
+) {
+  this.parser = new DelimiterParser('<think>', '</think>');
+}
     // Models like Gemma 4, DeepSeek, GPT-OSS use structured fields and are NOT parsed here.
   }
 
@@ -216,11 +228,12 @@ function normalizeNonStreamChoice(choice, model) {
 
   if (!reasoning && content) {
     let parser = null;
-    if (model === 'qwen/qwen3.5-397b-a17b' || 
-    model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5' ||
-    model === 'moonshotai/kimi-k3') {
-      parser = new DelimiterParser('<think>', '</think>');
-    }
+    if (
+  model === 'qwen/qwen3.5-397b-a17b' ||
+  model === 'nvidia/llama-3.3-nemotron-super-49b-v1.5'
+) {
+  parser = new DelimiterParser('<think>', '</think>');
+}
 
     if (parser) {
       const parsed = parser.processChunk(content);
