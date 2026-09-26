@@ -583,13 +583,7 @@ app.post('/v1/chat/completions', async (req, res) => {
   max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
   stream: stream || false
 };
-    console.log('[DEBUG] Sending request to NIM', {
-  model: primaryModel,
-  messages: messages?.length,
-  stream,
-  max_tokens: baseRequest.max_tokens
-});
-
+    
     const { response, model: usedModel } = await callWithFallback(
       baseRequest,
       modelChain,
