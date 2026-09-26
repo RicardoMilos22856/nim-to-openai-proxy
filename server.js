@@ -588,6 +588,26 @@ app.post('/v1/chat/completions', async (req, res) => {
   max_tokens,
   stream
 } = req.body;
+
+    if (model === 'kimi-k3' || MODEL_MAPPING[model] === 'moonshotai/kimi-k3') {
+  const lastAssistant = [...(messages || [])]
+    .reverse()
+    .find(m => m.role === 'assistant');
+
+  console.log('[K3 CONTEXT]', {
+    messages: messages?.length || 0,
+    lastAssistantContentLength:
+      typeof lastAssistant?.content === 'string'
+        ? lastAssistant.content.length
+        : 0,
+    lastAssistantHasReasoning:
+      !!lastAssistant?.reasoning_content,
+    lastAssistantReasoningLength:
+      typeof lastAssistant?.reasoning_content === 'string'
+        ? lastAssistant.reasoning_content.length
+        : 0
+  });
+}
     
     const primaryModel = MODEL_MAPPING[model] || 'nvidia/llama-3.3-nemotron-super-49b-v1.5';
     const modelChain = [primaryModel, ...FALLBACK_MODELS];
