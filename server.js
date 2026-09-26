@@ -844,6 +844,12 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
           }
 
           const finalMessage = { ...normalizedChoice.message, content };
+          console.log('[DEBUG] FINAL MESSAGE BEFORE SEND:', {
+  contentLength: content?.length || 0,
+  reasoningLength: reasoning?.length || 0,
+  content,
+  reasoning
+});
 
           // Same fix as the streaming path: keep the structured field
           // alongside the inline tags so structured-reasoning clients
