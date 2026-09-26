@@ -662,6 +662,11 @@ app.post('/v1/chat/completions', async (req, res) => {
 
             delta.content = clientContent;
 
+            if (!clientContent && !(SHOW_REASONING && normalizedDelta.reasoning)) {
+  return;
+            }
+            
+
             // FIX: keep a structured reasoning field alongside the inline
             // tags in content. GoonChat parses the inline tags;
             // clients like Pal Chat / OpenRouter-style apps look for a
