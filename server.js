@@ -898,6 +898,12 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
       : 0
 });
 
+console.log('[K3 OUT MESSAGE]', JSON.stringify(
+  openaiResponse.choices?.[0]?.message,
+  null,
+  2
+));
+
 res.json(openaiResponse);
     }
 
