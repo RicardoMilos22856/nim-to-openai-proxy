@@ -639,8 +639,6 @@ app.post('/v1/chat/completions', async (req, res) => {
   normalizedDelta.reasoning = cleanModelArtifacts(normalizedDelta.reasoning);
 
   let clientContent = '';
-            content = cleanModelArtifacts(content);
-const reasoning = cleanModelArtifacts(reasoning);
 
             if (SHOW_REASONING && inlineReasoning) {
               // Legacy GoonChat behavior: bake <thinking> tags into content
