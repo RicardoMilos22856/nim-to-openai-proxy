@@ -245,9 +245,24 @@ function normalizeNonStreamChoice(choice, model) {
   }
 
   const newMessage = { ...message };
-  if (content) newMessage.content = content;
-  if (reasoning) newMessage.reasoning = reasoning;
-  delete newMessage.reasoning_content;
+
+  if (content) {
+    newMessage.content = content;
+  }
+
+  if (reasoning) {
+    newMessage.reasoning = reasoning;
+
+    // Kimi K3 requires reasoning_content to be preserved
+    // for the next turn.
+    if (model === 'moonshotai/kimi-k3') {
+      newMessage.reasoning_content = message.reasoning_content || reasoning;
+    }
+  }
+
+  if (model !== 'moonshotai/kimi-k3') {
+    delete newMessage.reasoning_content;
+  }
 
   return { ...choice, message: newMessage };
 }
@@ -671,14 +686,22 @@ app.post('/v1/chat/completions', async (req, res) => {
             // separate `reasoning`/`reasoning_content` field to render their
             // own collapsible thinking UI. Without this, those clients just
             // see one flat content blob and never show a thinking indicator.
-            if (SHOW_REASONING && normalizedDelta.reasoning) {
-  delta.reasoning = normalizedDelta.reasoning;
-  delta.reasoning_content = normalizedDelta.reasoning;
-} else {
+
+            if (normalizedDelta.reasoning) {
+  if (
+    SHOW_REASONING ||
+    usedModel === 'moonshotai/kimi-k3'
+  ) {
+    delta.reasoning = normalizedDelta.reasoning;
+    delta.reasoning_content = normalizedDelta.reasoning;
+  } else {
+    delete delta.reasoning;
+    delete delta.reasoning_content;
+  }
+} else if (usedModel !== 'moonshotai/kimi-k3') {
   delete delta.reasoning;
   delete delta.reasoning_content;
 }
-          }
 
                     // Если upstream прислал чанк без delta — просто пропускаем его
           if (!delta) {
@@ -825,13 +848,22 @@ safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
           // Same fix as the streaming path: keep the structured field
           // alongside the inline tags so structured-reasoning clients
           // (Pal Chat, OpenRouter-style apps) can render their own UI.
-          if (SHOW_REASONING && reasoning) {
-            finalMessage.reasoning = reasoning;
-            finalMessage.reasoning_content = reasoning;
-          } else {
-            delete finalMessage.reasoning;
-            delete finalMessage.reasoning_content;
-          }
+          if (reasoning) {
+  if (usedModel === 'moonshotai/kimi-k3') {
+    // K3 needs this field preserved for future turns.
+    finalMessage.reasoning = reasoning;
+    finalMessage.reasoning_content = reasoning;
+  } else if (SHOW_REASONING) {
+    finalMessage.reasoning = reasoning;
+    finalMessage.reasoning_content = reasoning;
+  } else {
+    delete finalMessage.reasoning;
+    delete finalMessage.reasoning_content;
+  }
+} else if (usedModel !== 'moonshotai/kimi-k3') {
+  delete finalMessage.reasoning;
+  delete finalMessage.reasoning_content;
+}
 
           const finalChoice = {
             ...normalizedChoice,
