@@ -676,12 +676,12 @@ app.post('/v1/chat/completions', async (req, res) => {
             }
           }
 
-          // Если upstream прислал чанк без delta — просто пропускаем его
-if (!delta) {
-  return;
-}
+                    // Если upstream прислал чанк без delta — просто пропускаем его
+          if (!delta) {
+            return;
+          }
 
-safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
+          safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
         } catch (parseErr) {
           console.warn('[STREAM] Invalid JSON line:', line.slice(0, 100));
