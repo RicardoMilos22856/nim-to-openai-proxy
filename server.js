@@ -583,6 +583,12 @@ app.post('/v1/chat/completions', async (req, res) => {
   max_tokens: Math.min(max_tokens ?? 2048, MAX_TOKENS_LIMIT),
   stream: stream || false
 };
+    console.log('[DEBUG] Sending request to NIM', {
+  model: primaryModel,
+  messages: messages?.length,
+  stream,
+  max_tokens: baseRequest.max_tokens
+});
 
     const { response, model: usedModel } = await callWithFallback(
       baseRequest,
@@ -591,6 +597,13 @@ app.post('/v1/chat/completions', async (req, res) => {
       req.body.reasoning_effort,
       !!req.body.tools
     );
+
+    console.log('[DEBUG] NIM response received', {
+  model: usedModel,
+  status: response.status,
+  stream: !!stream
+});
+    
     upstreamStream = response.data;
     console.log('[PROXY] Model used:', usedModel);
     
@@ -683,15 +696,6 @@ app.post('/v1/chat/completions', async (req, res) => {
   safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
   return;
 }
-
-console.log(
-  '[STREAM CHUNK]',
-  JSON.stringify({
-    content: delta?.content || '',
-    reasoning: delta?.reasoning || '',
-    finish_reason: data.choices?.[0]?.finish_reason || null
-  })
-);
           
 safeWrite(res, `data: ${JSON.stringify(data)}\n\n`);
 
