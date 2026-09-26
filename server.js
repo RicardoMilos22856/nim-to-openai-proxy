@@ -669,12 +669,12 @@ app.post('/v1/chat/completions', async (req, res) => {
             // own collapsible thinking UI. Without this, those clients just
             // see one flat content blob and never show a thinking indicator.
             if (SHOW_REASONING && normalizedDelta.reasoning) {
-              delta.reasoning = normalizedDelta.reasoning;
-              delta.reasoning_content = normalizedDelta.reasoning;
-            } else {
-              delete delta.reasoning;
-              delete delta.reasoning_content;
-            }
+  delta.reasoning = normalizedDelta.reasoning;
+  delta.reasoning_content = normalizedDelta.reasoning;
+} else {
+  delete delta.reasoning;
+  delete delta.reasoning_content;
+}
           }
 
                     // Если upstream прислал чанк без delta — просто пропускаем его
