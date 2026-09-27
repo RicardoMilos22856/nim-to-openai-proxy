@@ -439,7 +439,7 @@ function getReasoningPayload(
           effort &&
           ['low', 'high', 'max'].includes(effort)
             ? effort
-            : 'low',
+            : 'high',
 
         chat_template_kwargs: {
           clear_thinking: true
