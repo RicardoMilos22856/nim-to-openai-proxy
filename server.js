@@ -761,7 +761,7 @@ async function callWithFallback(
                 ? 'stream'
                 : 'json',
 
-            timeout: 150000
+            timeout: 180000
           }
         );
 
