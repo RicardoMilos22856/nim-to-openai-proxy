@@ -98,8 +98,7 @@ const MODEL_MAPPING = {
 };
 
 const FALLBACK_MODELS = [
-  'mistralai/mistral-nemotron',
-  'openai/gpt-oss-120b'
+  'moonshotai/kimi-k3'
 ];
 
 // ─── Reasoning Subsystem ─────────────────────────────────────────────────────
