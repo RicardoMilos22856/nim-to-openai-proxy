@@ -374,7 +374,7 @@ function getReasoningPayload(
           effort &&
           ['low', 'high', 'max'].includes(effort)
             ? effort
-            : 'low'
+            : 'high'
       };
     }
 
