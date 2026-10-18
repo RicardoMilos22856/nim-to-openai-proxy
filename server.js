@@ -95,6 +95,8 @@ const MODEL_MAPPING = {
   'm3': 'minimaxai/minimax-m3',
   'google-light': 'google/gemma-4-31b-it',
   'mistral-nemo': 'mistralai/mistral-nemotron'
+  'step-5-preview': 'stepfun-ai/step-5-preview',
+  'stepfun-step-5-preview': 'stepfun-ai/step-5-preview',
 };
 
 const FALLBACK_MODELS = [
@@ -455,6 +457,12 @@ function getReasoningPayload(
         }
       };
     }
+
+      case 'stepfun-ai/step-5-preview': {
+  // NVIDIA NIM: reasoning is enabled by default.
+  // Do not send unsupported thinking controls.
+  return {};
+}
 
     case 'stepfun-ai/step-3.7-flash': {
       return {
