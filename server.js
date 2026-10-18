@@ -94,9 +94,9 @@ const MODEL_MAPPING = {
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'm3': 'minimaxai/minimax-m3',
   'google-light': 'google/gemma-4-31b-it',
-  'mistral-nemo': 'mistralai/mistral-nemotron'
+  'mistral-nemo': 'mistralai/mistral-nemotron',
   'step-5-preview': 'stepfun-ai/step-5-preview',
-  'stepfun-step-5-preview': 'stepfun-ai/step-5-preview',
+  'stepfun-step-5-preview': 'stepfun-ai/step-5-preview'
 };
 
 const FALLBACK_MODELS = [
