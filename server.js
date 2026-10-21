@@ -436,6 +436,9 @@ function getReasoningPayload(
     case 'z-ai/glm-5.3':
     case 'z-ai/glm-5.3-flash': {
       return {
+        presence_penalty: 0.2,   
+        frequency_penalty: 0.2,  
+        top_p: 0.95,
         reasoning_effort:
           effort &&
           ['low', 'high', 'max'].includes(effort)
