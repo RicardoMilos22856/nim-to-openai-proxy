@@ -458,11 +458,14 @@ function getReasoningPayload(
       };
     }
 
-      case 'stepfun-ai/step-5-preview': {
-  // NVIDIA NIM: reasoning is enabled by default.
-  // Do not send unsupported thinking controls.
-  return {};
-}
+          case 'stepfun-ai/step-5-preview': {
+      return {
+        presence_penalty: 0.3,   
+        frequency_penalty: 0.1,  
+        top_p: 0.95              
+      };
+    }
+
 
     case 'stepfun-ai/step-3.7-flash': {
       return {
