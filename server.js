@@ -80,8 +80,6 @@ validateConfig();
 // ─── Model Mapping ─────────────────────────────────────────────────────────
 
 const MODEL_MAPPING = {
-  'gpt-4o': 'deepseek-ai/deepseek-v4-pro-0813',
-  'gpt-4-pro': 'deepseek-ai/deepseek-v4-pro-0813',
   'deepseek-v4-pro': 'deepseek-ai/deepseek-v4-pro-0813',
   'deepseek-v4-pro-0813': 'deepseek-ai/deepseek-v4-pro-0813',
   'gpt-4-flash': 'deepseek-ai/deepseek-v4-flash-0731',
@@ -94,13 +92,13 @@ const MODEL_MAPPING = {
   'claude-3-sonnet': 'openai/gpt-oss-20b',
   'm3': 'minimaxai/minimax-m3',
   'google-light': 'google/gemma-4-31b-it',
-  'mistral-nemo': 'mistralai/mistral-nemotron',
   'step-5-preview': 'stepfun-ai/step-5-preview',
-  'stepfun-step-5-preview': 'stepfun-ai/step-5-preview'
+  'deepseek-flash': 'deepseek-ai/deepseek-v4.1-flash'
 };
 
 const FALLBACK_MODELS = [
-  'moonshotai/kimi-k3'
+  'deepseek-ai/deepseek-v4.1-flash',
+  'z-ai/glm-5.3-flash'
 ];
 
 // ─── Reasoning Subsystem ─────────────────────────────────────────────────────
